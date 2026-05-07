@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment/config
+.env
+.env.*
+!.env.example
+
+# Certificates and private keys
+cert/*
+!cert/.gitkeep
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and runtime
+logs/
+*.log
+coverage/
+dist/
+build/
