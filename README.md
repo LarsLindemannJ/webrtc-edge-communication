@@ -244,7 +244,7 @@ Se også [SECURITY.md](SECURITY.md).
 ## Kendte begrænsninger
 
 - Løsningen er en prototype og ikke en færdig produktionsplatform
-- QR-kode genereres via eksternt QR JavaScript-bibliotek fra CDN
+- QR-kode genereres via lokal QR-kodegenerator uden CDN-afhængighed
 - PeerJS-klientbiblioteket indlæses via CDN i browseren
 - Der er ikke implementeret brugerlogin eller adgangsstyring
 - TURN-server er ikke konfigureret som standard
@@ -254,7 +254,6 @@ Se også [SECURITY.md](SECURITY.md).
 
 ## Mulige forbedringer
 
-- Lokal QR-kodegenerator uden CDN-afhængighed
 - Login/adgangskontrol
 - TURN-server-konfiguration
 - Bedre session management
