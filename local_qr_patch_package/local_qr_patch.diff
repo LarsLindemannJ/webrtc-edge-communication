@@ -1,0 +1,109 @@
+--- operator.html
++++ operator.html
+@@ -171,12 +171,16 @@
+     </div>
+   </div>
+ 
++  <h3>Kamera-vælger</h3>
++  <div id="cameraSelector" class="panel">Ingen kameraer registreret endnu.</div>
++
+   <h3>Primitiv kameravisning</h3>
+   <div id="primitiveVideos"></div>
+ 
+ </main>
+ 
+ <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
++<script src="/qrcode.min.js"></script>
+ <script>
+ const statusEl = document.getElementById("status");
+ const clientAudio = document.getElementById("clientAudio");
+@@ -357,12 +361,17 @@
+   applyAccent(current === "#00ff00" ? "#ff9900" : "#00ff00");
+ };
+ 
++function htmlEscape(value) {
++  return String(value)
++    .replace(/&/g, "&amp;")
++    .replace(/</g, "&lt;")
++    .replace(/>/g, "&gt;")
++    .replace(/"/g, "&quot;")
++    .replace(/'/g, "&#39;");
++}
++
+ qrClientLinkBtn.onclick = () => {
+-  const qrUrl =
+-    "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
+-    encodeURIComponent(generatedClientLink);
+-
+-  const win = window.open("", "clientQrCode", "width=380,height=460");
++  const win = window.open("", "clientQrCode", "width=380,height=500");
+ 
+   if (!win) {
+     alert("Popup blokeret. Tillad popups for denne side.");
+@@ -376,22 +385,62 @@
+       <title>QR kode</title>
+       <style>
+         body { background:#000; color:#00ff00; font-family:monospace; text-align:center; padding:20px; }
+-        img { background:#fff; padding:10px; margin:15px 0; }
++        #qrcode {
++          display:inline-block;
++          background:#fff;
++          padding:10px;
++          margin:15px 0;
++        }
+         input { width:95%; background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; }
+         button { background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; margin-top:10px; }
++        .error { color:#ff9900; border:1px solid #ff9900; padding:8px; margin-top:10px; }
+       </style>
+     </head>
+     <body>
+       <h2>Scan klient-link</h2>
+-      <img src="${qrUrl}">
+-      <input readonly value="${generatedClientLink}">
++      <div id="qrcode"></div>
++      <input id="qrLinkText" readonly value="${htmlEscape(generatedClientLink)}">
+       <br>
+-      <button onclick="navigator.clipboard.writeText('${generatedClientLink}')">Kopiér link</button>
++      <button id="copyQrLinkBtn">Kopiér link</button>
++      <div id="qrError" class="error" style="display:none;"></div>
+     </body>
+     </html>
+   `);
+ 
+   win.document.close();
++
++  const copyBtn = win.document.getElementById("copyQrLinkBtn");
++  const linkText = win.document.getElementById("qrLinkText");
++  const errorBox = win.document.getElementById("qrError");
++
++  copyBtn.onclick = async () => {
++    try {
++      await win.navigator.clipboard.writeText(generatedClientLink);
++      copyBtn.textContent = "Kopieret";
++      setTimeout(() => copyBtn.textContent = "Kopiér link", 1500);
++    } catch {
++      linkText.select();
++      win.document.execCommand("copy");
++      copyBtn.textContent = "Kopieret";
++      setTimeout(() => copyBtn.textContent = "Kopiér link", 1500);
++    }
++  };
++
++  try {
++    if (typeof QRCode === "undefined") {
++      throw new Error("qrcode.min.js er ikke indlæst. Læg filen i web-roden og sørg for <script src=\"/qrcode.min.js\"></script> findes i operator.html.");
++    }
++
++    new QRCode(win.document.getElementById("qrcode"), {
++      text: generatedClientLink,
++      width: 300,
++      height: 300,
++      correctLevel: QRCode.CorrectLevel ? QRCode.CorrectLevel.M : undefined
++    });
++  } catch (err) {
++    errorBox.style.display = "block";
++    errorBox.textContent = "QR kunne ikke genereres lokalt: " + err.message;
++  }
+ };
+ 
+ 

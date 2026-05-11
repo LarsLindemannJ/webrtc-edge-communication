@@ -1,0 +1,26 @@
+#designModeToolbar {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  z-index: 99999;
+  background: var(--panel, #111827);
+  color: var(--text, #f9fafb);
+  border: 1px solid var(--border, #374151);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.35);
+}
+
+#designModeToolbar button {
+  padding: 8px 12px;
+}
+
+body.design-mode-on .grid-stack-item-content {
+  outline: 2px dashed var(--accent, #ff8800);
+}
+
+body.design-mode-off .grid-stack-item-content {
+  outline: none;
+}
