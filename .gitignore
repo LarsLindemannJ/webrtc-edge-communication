@@ -1,0 +1,12 @@
+cert/
+*.backup.*
+*.broken.*
+local_qr_patch_package/
+*.zip
+
+node_modules/
+
+public/*.backup.*
+public/*.broken.*
+
+*.log
