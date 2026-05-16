@@ -1,0 +1,68 @@
+(function () {
+  const STORAGE_KEY = "webrtc-status-widget-layout-v2";
+
+  function initStatusWidget() {
+    if (!window.GridStack) return;
+    if (document.getElementById("statusWidgetGrid")) return;
+
+    const statusEl = document.getElementById("status");
+    const systemStatusBox = document.getElementById("systemStatus");
+
+    if (!statusEl && !systemStatusBox) {
+      console.warn("Status-widget: fandt ikke #status eller #systemStatus");
+      return;
+    }
+
+    const anchor = systemStatusBox || statusEl;
+    const parent = anchor.parentNode;
+
+    const gridEl = document.createElement("div");
+    gridEl.id = "statusWidgetGrid";
+    gridEl.className = "grid-stack";
+
+    parent.insertBefore(gridEl, anchor);
+
+    const item = document.createElement("div");
+    item.className = "grid-stack-item";
+    item.setAttribute("gs-id", "status-widget");
+    item.setAttribute("gs-x", "0");
+    item.setAttribute("gs-y", "0");
+    item.setAttribute("gs-w", "12");
+    item.setAttribute("gs-h", "2");
+
+    const content = document.createElement("div");
+    content.className = "grid-stack-item-content";
+
+    const title = document.createElement("div");
+    title.className = "status-widget-title";
+    title.textContent = "Status";
+
+    content.appendChild(title);
+
+    if (systemStatusBox) content.appendChild(systemStatusBox);
+    if (statusEl) content.appendChild(statusEl);
+
+    item.appendChild(content);
+    gridEl.appendChild(item);
+
+    const grid = GridStack.init({
+      column: 12,
+      cellHeight: 70,
+      margin: 8,
+      float: true,
+      handle: ".status-widget-title",
+      resizable: { handles: "e,se,s,sw,w" }
+    }, gridEl);
+
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try { grid.load(JSON.parse(saved)); } catch (e) {}
+    }
+
+    grid.on("change", () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(grid.save(false)));
+    });
+  }
+
+  window.addEventListener("load", initStatusWidget);
+})();

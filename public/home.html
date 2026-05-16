@@ -1,0 +1,413 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC Home</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h2>WebRTC Communication</h2>
+  <button id="logoutBtn">Log ud</button>
+</header>
+
+<main>
+  <div class="panel">
+    <h3>Min bruger</h3>
+    <pre id="meBox">Indlæser...</pre>
+
+    <h3>Min status</h3>
+    <button onclick="setStatus('online')">Online</button>
+    <button onclick="setStatus('busy')">Optaget</button>
+    <button onclick="setStatus('away')">Væk</button>
+    <button onclick="setStatus('offline')">Offline</button>
+
+    <h3>GPS / Følg mig</h3>
+    <button id="followMeBtn" onclick="toggleFollowMe()">Følg mig: FRA</button>
+    <div id="locationStatus" style="margin-top:8px;">GPS-deling er slået fra.</div>
+  </div>
+
+  <div class="panel">
+    <h3>Indgående opkald</h3>
+    <div id="incomingBox">Ingen indgående opkald.</div>
+  </div>
+
+  <div class="panel">
+    <h3>Mine udgående opkald</h3>
+    <div id="outgoingBox">Ingen udgående opkald.</div>
+  </div>
+
+  <div class="panel">
+    <h3>Andre brugere</h3>
+    <div id="usersBox">Indlæser...</div>
+  </div>
+</main>
+
+<script>
+let me = null;
+let autoOpeningCall = false;
+let geoWatchId = null;
+let followMeEnabled = false;
+let lastGpsSentAt = 0;
+let lastGpsSentPosition = null;
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) location.href = "/login.html";
+  return res.json();
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  }[c]));
+}
+
+async function loadMe() {
+  const data = await api("/api/me");
+  me = data.user;
+  followMeEnabled = !!me.followMeEnabled;
+  updateFollowMeUi();
+  meBox.textContent = JSON.stringify(data.user, null, 2);
+}
+
+async function loadUsers() {
+  const data = await api("/api/users");
+  usersBox.innerHTML = "";
+
+  if (!data.users.length) {
+    usersBox.textContent = "Ingen andre brugere endnu.";
+    return;
+  }
+
+  data.users.forEach(u => {
+    const row = document.createElement("div");
+    row.style.border = "1px solid var(--accent)";
+    row.style.padding = "8px";
+    row.style.marginBottom = "8px";
+    row.innerHTML = `
+      <b>${esc(u.displayName)}</b> (@${esc(u.username)})<br>
+      Status: ${esc(u.status)}<br>
+      Sidst set: ${esc(u.lastSeen || "-")}<br>
+      Favorit: ${u.favorite ? "Ja" : "Nej"}<br>
+      GPS: ${u.location ? `
+        <a href="https://www.google.com/maps?q=${u.location.latitude},${u.location.longitude}" target="_blank">
+          Åbn kort
+        </a>
+        <br>Lat: ${esc(u.location.latitude)}
+        <br>Lon: ${esc(u.location.longitude)}
+        <br>Nøjagtighed: ${esc(u.location.accuracy)} m
+        <br>Opdateret: ${esc(u.location.updatedAt)}
+      ` : "Ikke delt"}<br><br>
+      <button onclick="startCall('${u.id}')">Ring op</button>
+      <button onclick="toggleFavorite('${u.id}', ${u.favorite ? "true" : "false"})">
+        ${u.favorite ? "Fjern favorit" : "Tilføj favorit"}
+      </button>
+    `;
+    usersBox.appendChild(row);
+  });
+}
+
+async function loadIncomingCalls() {
+  const data = await api("/api/calls/incoming");
+  incomingBox.innerHTML = "";
+
+  if (!data.calls.length) {
+    incomingBox.textContent = "Ingen indgående opkald.";
+    return;
+  }
+
+  data.calls.forEach(c => {
+    const row = document.createElement("div");
+    row.style.border = "1px solid #ff9900";
+    row.style.padding = "8px";
+    row.style.marginBottom = "8px";
+    row.innerHTML = `
+      <b>Opkald fra ${esc(c.fromDisplayName)}</b> (@${esc(c.fromUsername)})<br>
+      Tid: ${esc(c.createdAt)}<br><br>
+      <button onclick="answerCall('${c.id}')">Accepter</button>
+      <button onclick="rejectCall('${c.id}')">Afvis</button>
+    `;
+    incomingBox.appendChild(row);
+  });
+}
+
+async function loadOutgoingCalls() {
+  const data = await api("/api/calls/outgoing");
+
+  const acceptedCall = data.calls.find(c => c.status === "accepted");
+  if (acceptedCall && !autoOpeningCall) {
+    autoOpeningCall = true;
+    location.href = "/call.html?call=" + encodeURIComponent(acceptedCall.id);
+    return;
+  }
+
+  outgoingBox.innerHTML = "";
+
+  const active = data.calls.slice(-5).reverse();
+
+  if (!active.length) {
+    outgoingBox.textContent = "Ingen udgående opkald.";
+    return;
+  }
+
+  active.forEach(c => {
+    const row = document.createElement("div");
+    row.style.border = "1px solid var(--accent)";
+    row.style.padding = "8px";
+    row.style.marginBottom = "8px";
+    row.innerHTML = `
+      <b>Opkald</b><br>
+      Status: ${esc(c.status)}<br>
+      Tid: ${esc(c.createdAt)}<br>
+      ${c.status === "accepted" ? `<b>Modtager accepterede opkaldet.</b><br><button onclick="location.href=\'/call.html?call=${c.id}\'">Åbn opkald</button>` : ""}
+      ${c.status === "rejected" ? "<b>Opkaldet blev afvist.</b>" : ""}
+    `;
+    outgoingBox.appendChild(row);
+  });
+}
+
+async function refreshAll() {
+  await loadMe();
+  await loadUsers();
+  await loadIncomingCalls();
+  await loadOutgoingCalls();
+}
+
+
+function updateFollowMeUi() {
+  const btn = document.getElementById("followMeBtn");
+  const box = document.getElementById("locationStatus");
+  if (!btn || !box) return;
+
+  btn.textContent = followMeEnabled ? "Følg mig: TIL" : "Følg mig: FRA";
+  box.textContent = followMeEnabled
+    ? "GPS-deling er slået til. Browseren sender din position."
+    : "GPS-deling er slået fra.";
+}
+
+async function toggleFollowMe() {
+  followMeEnabled = !followMeEnabled;
+
+  await api("/api/location/follow-me", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ enabled: followMeEnabled })
+  });
+
+  updateFollowMeUi();
+
+  if (followMeEnabled) {
+    startGpsTracking();
+  } else {
+    stopGpsTracking();
+  }
+
+  await refreshAll();
+}
+
+function distanceMeters(a, b) {
+  if (!a || !b) return Infinity;
+
+  const R = 6371000;
+  const toRad = deg => deg * Math.PI / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function adaptiveGpsPolicy(pos) {
+  const now = Date.now();
+  const current = {
+    latitude: pos.coords.latitude,
+    longitude: pos.coords.longitude
+  };
+
+  const distance = distanceMeters(lastGpsSentPosition, current);
+  const secondsSinceLast = lastGpsSentAt ? (now - lastGpsSentAt) / 1000 : Infinity;
+  const speed = pos.coords.speed !== null && pos.coords.speed !== undefined
+    ? pos.coords.speed
+    : distance / Math.max(secondsSinceLast, 1);
+
+  let intervalSeconds = 30;
+  let minDistanceMeters = 10;
+  let mode = "stille";
+
+  if (speed >= 8) {
+    intervalSeconds = 2;
+    minDistanceMeters = 10;
+    mode = "kører";
+  } else if (speed >= 1.2) {
+    intervalSeconds = 5;
+    minDistanceMeters = 5;
+    mode = "går/løber";
+  }
+
+  const shouldSend =
+    !lastGpsSentAt ||
+    secondsSinceLast >= intervalSeconds ||
+    distance >= minDistanceMeters;
+
+  return {
+    shouldSend,
+    mode,
+    speed,
+    distance,
+    secondsSinceLast,
+    intervalSeconds,
+    minDistanceMeters
+  };
+}
+
+function startGpsTracking() {
+  if (!navigator.geolocation) {
+    locationStatus.textContent = "Browseren understøtter ikke GPS/geolocation.";
+    return;
+  }
+
+  if (geoWatchId !== null) return;
+
+  geoWatchId = navigator.geolocation.watchPosition(async pos => {
+    const policy = adaptiveGpsPolicy(pos);
+
+    if (!policy.shouldSend) {
+      locationStatus.textContent =
+        "GPS aktiv (" + policy.mode + ") - venter med at sende. " +
+        "Sidst sendt for " + Math.round(policy.secondsSinceLast) + " sek. siden.";
+      return;
+    }
+
+    const payload = {
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      accuracy: Math.round(pos.coords.accuracy || 0),
+      speed: pos.coords.speed,
+      mode: policy.mode
+    };
+
+    try {
+      await api("/api/location/update", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+
+      lastGpsSentAt = Date.now();
+      lastGpsSentPosition = {
+        latitude: payload.latitude,
+        longitude: payload.longitude
+      };
+
+      locationStatus.textContent =
+        "GPS sendt (" + policy.mode + "): " +
+        payload.latitude.toFixed(6) + ", " +
+        payload.longitude.toFixed(6) +
+        " ±" + payload.accuracy + " m" +
+        " | ca. " + policy.speed.toFixed(1) + " m/s" +
+        " | næste interval ca. " + policy.intervalSeconds + " sek.";
+    } catch (e) {
+      locationStatus.textContent = "GPS kunne ikke sendes: " + e.message;
+    }
+  }, err => {
+    locationStatus.textContent = "GPS-fejl: " + err.message;
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 3000,
+    timeout: 15000
+  });
+}
+
+function stopGpsTracking() {
+  if (geoWatchId !== null) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+  }
+
+  lastGpsSentAt = 0;
+  lastGpsSentPosition = null;
+}
+
+async function setStatus(status) {
+  await api("/api/status", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ status })
+  });
+  await refreshAll();
+}
+
+
+async function toggleFavorite(userId, isFavorite) {
+  await api(isFavorite ? "/api/favorites/remove" : "/api/favorites/add", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ userId })
+  });
+
+  await refreshAll();
+}
+
+async function startCall(toUserId) {
+  const data = await api("/api/call/start", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ toUserId })
+  });
+
+  if (!data.ok) {
+    alert(data.error || "Kunne ikke starte opkald");
+    return;
+  }
+
+  await loadOutgoingCalls();
+}
+
+async function answerCall(callId) {
+  const data = await api("/api/call/answer", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ callId })
+  });
+
+  if (data.ok) {
+    location.href = "/call.html?call=" + encodeURIComponent(callId);
+  }
+
+  await refreshAll();
+}
+
+async function rejectCall(callId) {
+  await api("/api/call/reject", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ callId })
+  });
+
+  await refreshAll();
+}
+
+logoutBtn.onclick = async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location.href = "/login.html";
+};
+
+refreshAll().then(() => {
+  if (followMeEnabled) startGpsTracking();
+});
+
+setInterval(() => {
+  loadUsers();
+  loadIncomingCalls();
+  loadOutgoingCalls();
+}, 2000);
+</script>
+</body>
+</html>

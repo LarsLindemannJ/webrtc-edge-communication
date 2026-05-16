@@ -1,0 +1,12 @@
+#operatorMainGrid {
+  margin-top: 20px;
+}
+
+#operatorMainGrid .grid-stack-item-content {
+  background: var(--panel, #111827);
+  color: var(--text, #f9fafb);
+  border: 1px solid var(--border, #374151);
+  border-radius: 12px;
+  overflow: auto;
+  padding: 10px;
+}

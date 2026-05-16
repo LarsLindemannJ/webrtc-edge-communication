@@ -1,0 +1,551 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC Call</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .videoGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    video {
+      width: 100%;
+      max-width: none;
+      min-height: 220px;
+      background: #111;
+    }
+
+    @keyframes chatBlink {
+      0% { background:#000; color:var(--accent); }
+      50% { background:var(--accent); color:#000; }
+      100% { background:#000; color:var(--accent); }
+    }
+
+    .chatBlink {
+      animation: chatBlink 0.8s infinite;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h2>1:1 WebRTC-opkald</h2>
+  <button id="chatBtn">CHAT</button>
+  <button id="hangupBtn">Læg på</button>
+  <button id="homeBtn">Home</button>
+</header>
+
+<main>
+  <div class="panel">
+    <div id="status">Starter...</div>
+  </div>
+
+  <div class="videoGrid">
+    <div class="panel">
+      <h3>Mit kamera</h3>
+      <video id="localVideo" autoplay muted playsinline controls></video>
+      <br><br>
+      <button id="muteBtn">Mute mikrofon</button>
+      <button id="cameraBtn">Sluk kamera</button>
+    </div>
+
+    <div class="panel">
+      <h3>Modpart</h3>
+      <video id="remoteVideo" autoplay playsinline controls></video>
+    </div>
+  </div>
+
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const callId = params.get("call");
+
+const statusEl = document.getElementById("status");
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
+const muteBtn = document.getElementById("muteBtn");
+const cameraBtn = document.getElementById("cameraBtn");
+const chatBtn = document.getElementById("chatBtn");
+const hangupBtn = document.getElementById("hangupBtn");
+const homeBtn = document.getElementById("homeBtn");
+
+let callInfo = null;
+let role = null;
+let localStream = null;
+let activeCall = null;
+let peer = null;
+let chatConn = null;
+let chatWindow = null;
+let unreadChat = false;
+let hasCalled = false;
+const CHAT_HISTORY_KEY = "webrtc-call-chat-history-" + callId;
+let chatHistory = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+let callEnded = false;
+let pollTimer = null;
+
+function setStatus(msg) {
+  statusEl.textContent = msg;
+}
+
+function saveChatHistory() {
+  localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
+}
+
+function renderChatWindow() {
+  if (!chatWindow || chatWindow.closed) return;
+
+  const messages = chatWindow.document.getElementById("chatMessages");
+  if (!messages) return;
+
+  messages.innerHTML = "";
+
+  chatHistory.forEach(item => {
+    const row = chatWindow.document.createElement("div");
+    row.style.marginBottom = "6px";
+    row.textContent = "[" + item.time + "] " + item.from + ": " + item.text;
+    messages.appendChild(row);
+  });
+
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function openChatWindow() {
+  if (!chatWindow || chatWindow.closed) {
+    chatWindow = window.open("", "webrtcCallChat-" + callId, "width=430,height=620");
+
+    chatWindow.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <title>Chat</title>
+        <style>
+          body { background:#000; color:#00ff00; font-family:monospace; margin:0; padding:10px; }
+          button, input {
+            background:#000; color:#00ff00; border:1px solid #00ff00;
+            padding:8px; font-family:monospace;
+          }
+          #chatMessages {
+            height:460px; overflow:auto; border:1px solid #00ff00;
+            padding:8px; margin:10px 0;
+          }
+          #chatInput { width:68%; }
+          .top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        </style>
+      </head>
+      <body>
+        <div class="top">
+          <h2 style="margin:0;">CHAT</h2>
+          <button id="clearChatBtn">Slet dialog</button>
+        </div>
+        <div id="chatMessages"></div>
+        <input id="chatInput" placeholder="Skriv besked...">
+        <button id="sendChatBtn">Send</button>
+      </body>
+      </html>
+    `);
+
+    chatWindow.document.close();
+
+    chatWindow.document.getElementById("sendChatBtn").onclick = sendChatMessage;
+    chatWindow.document.getElementById("chatInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") sendChatMessage();
+    });
+
+    chatWindow.document.getElementById("clearChatBtn").onclick = () => {
+      if (!chatWindow.confirm("Slet hele chatdialogen på denne enhed?")) return;
+      chatHistory = [];
+      saveChatHistory();
+      renderChatWindow();
+    };
+  }
+
+  unreadChat = false;
+  chatBtn.classList.remove("chatBlink");
+  renderChatWindow();
+  chatWindow.focus();
+}
+
+function addChatMessage(from, text, incoming = false) {
+  chatHistory.push({
+    from,
+    text,
+    time: new Date().toLocaleTimeString()
+  });
+
+  saveChatHistory();
+  renderChatWindow();
+
+  if (incoming && (!chatWindow || chatWindow.closed)) {
+    unreadChat = true;
+    chatBtn.classList.add("chatBlink");
+  }
+}
+
+function setupChatConnection(conn) {
+  chatConn = conn;
+
+  chatConn.on("open", () => {
+    addChatMessage("system", "Chat forbundet");
+  });
+
+  chatConn.on("data", data => {
+    if (data && data.type === "chat") {
+      addChatMessage("modpart", data.message, true);
+    }
+  });
+
+  chatConn.on("close", () => {
+    addChatMessage("system", "Chat lukket");
+  });
+
+  chatConn.on("error", err => {
+    addChatMessage("system", "Chat-fejl: " + err.message);
+  });
+}
+
+function sendChatMessage() {
+  if (!chatWindow || chatWindow.closed) openChatWindow();
+
+  const input = chatWindow.document.getElementById("chatInput");
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  if (!chatConn || !chatConn.open) {
+    addChatMessage("system", "Chat er ikke forbundet endnu");
+    return;
+  }
+
+  chatConn.send({
+    type: "chat",
+    message: msg,
+    timestamp: new Date().toISOString()
+  });
+
+  addChatMessage("mig", msg);
+  input.value = "";
+}
+
+chatBtn.onclick = openChatWindow;
+
+
+// Robust chat window fallback with local saved call history
+if (typeof openChatWindow !== "function") {
+  var chatWindow = null;
+  var unreadChat = false;
+  var CHAT_HISTORY_KEY = "webrtc-call-chat-history-" + callId;
+  var chatHistory = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+
+  function saveChatHistory() {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
+  }
+
+  function renderChatWindow() {
+    if (!chatWindow || chatWindow.closed) return;
+    const messages = chatWindow.document.getElementById("chatMessages");
+    if (!messages) return;
+
+    messages.innerHTML = "";
+    chatHistory.forEach(item => {
+      const row = chatWindow.document.createElement("div");
+      row.style.marginBottom = "6px";
+      row.textContent = "[" + item.time + "] " + item.from + ": " + item.text;
+      messages.appendChild(row);
+    });
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function openChatWindow() {
+    if (!chatWindow || chatWindow.closed) {
+      chatWindow = window.open("", "webrtcCallChat-" + callId, "width=430,height=620");
+      chatWindow.document.write(`
+        <!doctype html>
+        <html>
+        <head>
+          <title>Chat</title>
+          <style>
+            body { background:#000; color:#00ff00; font-family:monospace; margin:0; padding:10px; }
+            button, input { background:#000; color:#00ff00; border:1px solid #00ff00; padding:8px; font-family:monospace; }
+            #chatMessages { height:460px; overflow:auto; border:1px solid #00ff00; padding:8px; margin:10px 0; }
+            #chatInput { width:68%; }
+            .top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+          </style>
+        </head>
+        <body>
+          <div class="top">
+            <h2 style="margin:0;">CHAT</h2>
+            <button id="clearChatBtn">Slet dialog</button>
+          </div>
+          <div id="chatMessages"></div>
+          <input id="chatInput" placeholder="Skriv besked...">
+          <button id="sendChatBtn">Send</button>
+        </body>
+        </html>
+      `);
+      chatWindow.document.close();
+
+      chatWindow.document.getElementById("sendChatBtn").onclick = sendChatMessage;
+      chatWindow.document.getElementById("chatInput").addEventListener("keydown", e => {
+        if (e.key === "Enter") sendChatMessage();
+      });
+
+      chatWindow.document.getElementById("clearChatBtn").onclick = () => {
+        if (!chatWindow.confirm("Slet hele chatdialogen på denne enhed?")) return;
+        chatHistory = [];
+        saveChatHistory();
+        renderChatWindow();
+      };
+    }
+
+    if (typeof chatBtn !== "undefined") chatBtn.classList.remove("chatBlink");
+    renderChatWindow();
+    chatWindow.focus();
+  }
+
+  function addChatMessage(from, text, incoming = false) {
+    chatHistory.push({ from, text, time: new Date().toLocaleTimeString() });
+    saveChatHistory();
+    renderChatWindow();
+
+    if (incoming && (!chatWindow || chatWindow.closed) && typeof chatBtn !== "undefined") {
+      chatBtn.classList.add("chatBlink");
+    }
+  }
+
+  if (typeof chatBtn !== "undefined") chatBtn.onclick = openChatWindow;
+}
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) location.href = "/login.html";
+  return res.json();
+}
+
+async function loadCall() {
+  const data = await api("/api/call/" + encodeURIComponent(callId));
+  if (!data.ok) throw new Error(data.error || "Kunne ikke hente opkald");
+  callInfo = data.call;
+  role = data.role;
+  return data;
+}
+
+async function startMedia() {
+  localStream = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+
+  localVideo.srcObject = localStream;
+}
+
+async function publishPeerId(peerId) {
+  const data = await api("/api/call/" + encodeURIComponent(callId) + "/peer", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ peerId })
+  });
+
+  callInfo = data.call;
+}
+
+async function pollCallState() {
+  try {
+    const data = await loadCall();
+    callInfo = data.call;
+
+    if (callInfo.status === "ended" || callInfo.status === "rejected") {
+      setStatus("Modparten har lagt på. Opkald afsluttet.");
+      stopEverything();
+      setTimeout(() => {
+        location.href = "/user.html";
+      }, 1200);
+      return;
+    }
+
+    const callerPeer = callInfo.fromPeerId;
+    const calleePeer = callInfo.toPeerId;
+
+    if (role === "caller" && callerPeer && calleePeer && !hasCalled) {
+      hasCalled = true;
+      setStatus("Ringer op til modpart...");
+      if (!chatConn) {
+        setupChatConnection(peer.connect(calleePeer, {
+          metadata: { callId, type: "chat" }
+        }));
+      }
+
+      activeCall = peer.call(calleePeer, localStream, {
+        metadata: { callId }
+      });
+
+      activeCall.on("stream", stream => {
+        remoteVideo.srcObject = stream;
+        setStatus("Forbundet");
+      });
+
+      activeCall.on("close", async () => {
+        if (!callEnded) {
+          setStatus("Forbindelsen blev lukket");
+          try {
+            await api("/api/call/" + encodeURIComponent(callId) + "/hangup", { method: "POST" });
+          } catch {}
+          stopEverything();
+          setTimeout(() => location.href = "/user.html", 1200);
+        }
+      });
+      activeCall.on("error", err => setStatus("Opkaldsfejl: " + err.message));
+    }
+
+    if (!hasCalled || !remoteVideo.srcObject) {
+      setStatus(
+        "Opkald status: " + callInfo.status +
+        " | rolle: " + role +
+        " | callerPeer: " + (callerPeer || "venter") +
+        " | calleePeer: " + (calleePeer || "venter")
+      );
+    }
+  } catch (err) {
+    setStatus("Fejl: " + err.message);
+  }
+}
+
+function stopEverything() {
+  callEnded = true;
+
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  if (chatConn) {
+    try { chatConn.close(); } catch {}
+    chatConn = null;
+  }
+
+  if (activeCall) {
+    try { activeCall.close(); } catch {}
+    activeCall = null;
+  }
+
+  if (peer) {
+    try { peer.destroy(); } catch {}
+    peer = null;
+  }
+
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+
+  localVideo.srcObject = null;
+  remoteVideo.srcObject = null;
+}
+
+muteBtn.onclick = () => {
+  if (!localStream) return;
+  const tracks = localStream.getAudioTracks();
+  tracks.forEach(t => t.enabled = !t.enabled);
+  const muted = tracks.every(t => !t.enabled);
+  muteBtn.textContent = muted ? "Unmute mikrofon" : "Mute mikrofon";
+};
+
+cameraBtn.onclick = () => {
+  if (!localStream) return;
+  const tracks = localStream.getVideoTracks();
+  tracks.forEach(t => t.enabled = !t.enabled);
+  const off = tracks.every(t => !t.enabled);
+  cameraBtn.textContent = off ? "Tænd kamera" : "Sluk kamera";
+};
+
+hangupBtn.onclick = async () => {
+  callEnded = true;
+  await api("/api/call/" + encodeURIComponent(callId) + "/hangup", { method: "POST" });
+
+  if (activeCall) {
+    try { activeCall.close(); } catch {}
+  }
+
+  stopEverything();
+  location.href = "/user.html";
+};
+
+homeBtn.onclick = () => {
+  location.href = "/user.html";
+};
+
+async function main() {
+  if (!callId) {
+    setStatus("Mangler call id");
+    return;
+  }
+
+  await loadCall();
+
+  if (callInfo.status !== "accepted") {
+    setStatus("Opkald er ikke accepteret endnu. Status: " + callInfo.status);
+    return;
+  }
+
+  setStatus("Starter kamera/mikrofon...");
+  await startMedia();
+
+  peer = new Peer(undefined, {
+    host: location.hostname,
+    port: location.port || 8443,
+    path: "/peerjs",
+    secure: location.protocol === "https:"
+  });
+
+  peer.on("open", async peerId => {
+    setStatus("Peer klar: " + peerId);
+    await publishPeerId(peerId);
+    await pollCallState();
+    pollTimer = setInterval(pollCallState, 1000);
+  });
+
+  peer.on("connection", conn => {
+    if (conn.metadata && conn.metadata.callId === callId && conn.metadata.type === "chat") {
+      setupChatConnection(conn);
+    }
+  });
+
+  peer.on("call", incoming => {
+    setStatus("Indgående WebRTC-call...");
+    activeCall = incoming;
+    incoming.answer(localStream);
+
+    incoming.on("stream", stream => {
+      remoteVideo.srcObject = stream;
+      setStatus("Forbundet");
+    });
+
+    incoming.on("close", async () => {
+      if (!callEnded) {
+        setStatus("Forbindelsen blev lukket");
+        try {
+          await api("/api/call/" + encodeURIComponent(callId) + "/hangup", { method: "POST" });
+        } catch {}
+        stopEverything();
+        setTimeout(() => location.href = "/user.html", 1200);
+      }
+    });
+    incoming.on("error", err => setStatus("Opkaldsfejl: " + err.message));
+  });
+
+  peer.on("error", err => {
+    setStatus("PeerJS-fejl: " + err.message);
+  });
+}
+
+main().catch(err => {
+  setStatus("Startfejl: " + err.message);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,588 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC User</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/user-app.css">
+<style>
+@keyframes chatBlink {
+  0% { background:#000; color:var(--accent); }
+  50% { background:var(--accent); color:#000; }
+  100% { background:#000; color:var(--accent); }
+}
+.chatBlink { animation: chatBlink 0.8s infinite; }
+</style>
+</head>
+<body>
+<header class="user-topbar">
+  <h2>WEBCOM USER</h2>
+  <span id="topStatus">Indlæser...</span>
+  <button id="inboxBtn" onclick="openInbox()">CHAT</button>
+  <span class="user-spacer"></span>
+  <button onclick="location.href='/home.html'">Fallback home</button>
+  <button id="logoutBtn">Log ud</button>
+</header>
+
+<main class="user-shell">
+  <section class="user-grid">
+    <div class="user-card">
+      <h3>Min profil</h3>
+      <pre id="meBox">Indlæser...</pre>
+    </div>
+
+    <div class="user-card">
+      <h3>Status</h3>
+      <button onclick="setStatus('online')">Online</button>
+      <button onclick="setStatus('busy')">Optaget</button>
+      <button onclick="setStatus('away')">Væk</button>
+      <button onclick="setStatus('offline')">Offline</button>
+    </div>
+
+    <div class="user-card">
+      <h3>Følg mig / GPS</h3>
+      <button id="followMeBtn" onclick="toggleFollowMe()">Følg mig: FRA</button>
+      <div id="locationStatus" class="user-muted" style="margin-top:8px;">GPS-deling er slået fra.</div>
+    </div>
+  </section>
+
+  <section class="user-grid">
+    <div class="user-card">
+      <h3>Indgående opkald</h3>
+      <div id="incomingBox">Ingen indgående opkald.</div>
+    </div>
+
+    <div class="user-card">
+      <h3>Udgående opkald</h3>
+      <div id="outgoingBox">Ingen udgående opkald.</div>
+    </div>
+  </section>
+
+  <section class="user-grid">
+    <div class="user-card">
+      <h3>Venner / brugere</h3>
+      <div id="usersBox">Indlæser...</div>
+    </div>
+
+    <div class="user-card">
+      <h3>Seneste aktivitet</h3>
+      <div id="activityBox" class="user-muted">Klar.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+let me = null;
+let autoOpeningCall = false;
+let geoWatchId = null;
+let followMeEnabled = false;
+let lastGpsSentAt = 0;
+let lastGpsSentPosition = null;
+let lastUnreadCount = 0;
+let directChatWindow = null;
+let activeChatUserId = null;
+let activeChatUserName = null;
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) location.href = "/login.html";
+  return res.json();
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  }[c]));
+}
+
+function logActivity(text) {
+  const row = document.createElement("div");
+  row.textContent = "[" + new Date().toLocaleTimeString() + "] " + text;
+  activityBox.prepend(row);
+}
+
+async function loadMe() {
+  const data = await api("/api/me");
+  me = data.user;
+  followMeEnabled = !!me.followMeEnabled;
+  updateFollowMeUi();
+  meBox.textContent = JSON.stringify(data.user, null, 2);
+  topStatus.textContent = `${me.displayName} · ${me.status}`;
+}
+
+async function loadUsers() {
+  const data = await api("/api/users");
+  usersBox.innerHTML = "";
+
+  if (!data.users.length) {
+    usersBox.textContent = "Ingen andre brugere endnu.";
+    return;
+  }
+
+  data.users.forEach(u => {
+    const row = document.createElement("div");
+    row.className = "user-row";
+    row.innerHTML = `
+      <b>${esc(u.displayName)}</b> <span class="user-muted">@${esc(u.username)}</span><br>
+      Status: ${esc(u.status)}<br>
+      Favorit: ${u.favorite ? "Ja" : "Nej"}<br>
+      Sidst set: ${esc(u.lastSeen || "-")}<br>
+      GPS: ${u.location ? `
+        <a href="https://www.google.com/maps?q=${u.location.latitude},${u.location.longitude}" target="_blank">Åbn kort</a>
+        <br>Lat: ${esc(u.location.latitude)}
+        <br>Lon: ${esc(u.location.longitude)}
+        <br>Nøjagtighed: ${esc(u.location.accuracy)} m
+        <br>Mode: ${esc(u.location.mode || "-")}
+        <br>Opdateret: ${esc(u.location.updatedAt)}
+      ` : "Ikke delt"}<br><br>
+      <button onclick="startCall('${u.id}')">Ring op</button>
+      <button onclick="openUserChat('${u.id}', '${esc(u.displayName).replace(/'/g, "\\'")}')">Chat</button>
+      <button onclick="toggleFavorite('${u.id}', ${u.favorite ? "true" : "false"})">
+        ${u.favorite ? "Fjern favorit" : "Tilføj favorit"}
+      </button>
+    `;
+    usersBox.appendChild(row);
+  });
+}
+
+async function loadIncomingCalls() {
+  const data = await api("/api/calls/incoming");
+  incomingBox.innerHTML = "";
+
+  if (!data.calls.length) {
+    incomingBox.textContent = "Ingen indgående opkald.";
+    return;
+  }
+
+  data.calls.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "user-row";
+    row.style.borderColor = "#ff9900";
+    row.innerHTML = `
+      <b>Opkald fra ${esc(c.fromDisplayName)}</b> <span class="user-muted">@${esc(c.fromUsername)}</span><br>
+      Tid: ${esc(c.createdAt)}<br><br>
+      <button onclick="answerCall('${c.id}')">Accepter</button>
+      <button onclick="rejectCall('${c.id}')">Afvis</button>
+    `;
+    incomingBox.appendChild(row);
+  });
+}
+
+async function loadOutgoingCalls() {
+  const data = await api("/api/calls/outgoing");
+
+  const acceptedCall = data.calls.find(c => c.status === "accepted");
+  if (acceptedCall && !autoOpeningCall) {
+    autoOpeningCall = true;
+    location.href = "/call.html?call=" + encodeURIComponent(acceptedCall.id);
+    return;
+  }
+
+  outgoingBox.innerHTML = "";
+  const active = data.calls.slice(-5).reverse();
+
+  if (!active.length) {
+    outgoingBox.textContent = "Ingen udgående opkald.";
+    return;
+  }
+
+  active.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "user-row";
+    row.innerHTML = `
+      <b>Opkald</b><br>
+      Status: ${esc(c.status)}<br>
+      Tid: ${esc(c.createdAt)}<br>
+      ${c.status === "accepted" ? `<b>Modtager accepterede opkaldet.</b>` : ""}
+      ${c.status === "rejected" ? `<b>Opkaldet blev afvist.</b>` : ""}
+      ${c.status === "ended" ? `<b>Opkaldet er afsluttet.</b>` : ""}
+      ${c.status === "cancelled" ? `<b>Opkaldet blev fortrudt.</b>` : ""}
+      ${c.status === "ringing" ? `<br><button onclick="cancelCall('${c.id}')">Fortryd opkald</button>` : ""}
+    `;
+    outgoingBox.appendChild(row);
+  });
+}
+
+async function refreshAll() {
+  await loadMe();
+  await loadUsers();
+  await loadIncomingCalls();
+  await loadOutgoingCalls();
+}
+
+function updateFollowMeUi() {
+  followMeBtn.textContent = followMeEnabled ? "Følg mig: TIL" : "Følg mig: FRA";
+  locationStatus.textContent = followMeEnabled
+    ? "GPS-deling er slået til."
+    : "GPS-deling er slået fra.";
+}
+
+async function setStatus(status) {
+  await api("/api/status", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ status })
+  });
+  logActivity("Status ændret til " + status);
+  await refreshAll();
+}
+
+async function toggleFavorite(userId, isFavorite) {
+  await api(isFavorite ? "/api/favorites/remove" : "/api/favorites/add", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ userId })
+  });
+  logActivity(isFavorite ? "Favorit fjernet" : "Favorit tilføjet");
+  await refreshAll();
+}
+
+
+
+async function openUserChat(userId, name) {
+  activeChatUserId = userId;
+  activeChatUserName = name;
+
+  if (!directChatWindow || directChatWindow.closed) {
+    directChatWindow = window.open("", "directChat-" + userId, "width=430,height=620");
+
+    directChatWindow.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <title>Chat</title>
+        <style>
+          body { background:#000; color:#00ff00; font-family:monospace; margin:0; padding:10px; }
+          button, input {
+            background:#000; color:#00ff00; border:1px solid #00ff00;
+            padding:8px; font-family:monospace;
+          }
+          #chatMessages {
+            height:460px; overflow:auto; border:1px solid #00ff00;
+            padding:8px; margin:10px 0;
+          }
+          #chatInput { width:68%; }
+          .top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        </style>
+      </head>
+      <body>
+        <div class="top">
+          <h2 style="margin:0;">CHAT</h2>
+          <span>${name}</span>
+          <button id="clearChatBtn">Slet dialog</button>
+        </div>
+        <div id="chatMessages"></div>
+        <input id="chatInput" placeholder="Skriv besked...">
+        <button id="sendChatBtn">Send</button>
+      </body>
+      </html>
+    `);
+
+    directChatWindow.document.close();
+
+    directChatWindow.document.getElementById("sendChatBtn").onclick = sendUserChatMessage;
+    directChatWindow.document.getElementById("chatInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") sendUserChatMessage();
+    });
+
+    directChatWindow.document.getElementById("clearChatBtn").onclick = async () => {
+      if (!directChatWindow.confirm("Slet hele dialogen med " + name + "?")) return;
+
+      await api("/api/messages/delete-conversation", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ userId })
+      });
+
+      await renderUserChat();
+    };
+  }
+
+  await renderUserChat();
+  await checkInboxBlink();
+  directChatWindow.focus();
+}
+
+async function renderUserChat() {
+  if (!activeChatUserId || !directChatWindow || directChatWindow.closed) return;
+
+  const data = await api("/api/messages/conversation/" + encodeURIComponent(activeChatUserId));
+  const box = directChatWindow.document.getElementById("chatMessages");
+  if (!box) return;
+
+  box.innerHTML = "";
+
+  data.messages.forEach(m => {
+    const row = directChatWindow.document.createElement("div");
+    row.style.marginBottom = "6px";
+    const from = m.fromUserId === me.id ? "mig" : m.fromDisplayName;
+    row.textContent = "[" + new Date(m.createdAt).toLocaleTimeString() + "] " + from + ": " + m.message;
+    box.appendChild(row);
+  });
+
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendUserChatMessage() {
+  if (!activeChatUserId || !directChatWindow || directChatWindow.closed) return;
+
+  const input = directChatWindow.document.getElementById("chatInput");
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  await api("/api/messages/send", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      toUserId: activeChatUserId,
+      message: msg
+    })
+  });
+
+  input.value = "";
+  await renderUserChat();
+  await checkInboxBlink();
+}
+
+
+async function cancelCall(callId) {
+  await api("/api/call/cancel", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ callId })
+  });
+
+  logActivity("Opkald fortrudt");
+  await refreshAll();
+}
+
+async function sendDirectMessage(toUserId, name) {
+  const msg = prompt("Skriv chatbesked til " + name + ":");
+  if (!msg || !msg.trim()) return;
+
+  const data = await api("/api/messages/send", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ toUserId, message: msg.trim() })
+  });
+
+  if (data.ok) {
+    logActivity("Chatbesked sendt til " + name);
+    alert("Besked sendt. Modtager får den, når vedkommende er online.");
+  }
+}
+
+async function checkInboxBlink() {
+  const data = await api("/api/messages/unread-count");
+  const btn = document.getElementById("inboxBtn");
+
+  lastUnreadCount = data.count || 0;
+  btn.textContent = lastUnreadCount ? "CHAT (" + lastUnreadCount + ")" : "CHAT";
+  btn.classList.toggle("chatBlink", lastUnreadCount > 0);
+}
+
+async function openInbox() {
+  const data = await api("/api/messages/inbox");
+
+  let text = "CHAT INDBAKKE\\n\\n";
+
+  if (!data.messages.length) {
+    text += "Ingen beskeder.";
+  } else {
+    data.messages.slice(0, 30).forEach(m => {
+      text += "[" + new Date(m.createdAt).toLocaleString() + "] ";
+      text += m.fromDisplayName + " @" + m.fromUsername + "\\n";
+      text += m.message + "\\n";
+      text += m.readAt ? "(læst)\\n\\n" : "(ulæst)\\n\\n";
+    });
+  }
+
+  alert(text);
+
+  await api("/api/messages/mark-read", { method: "POST" });
+  await checkInboxBlink();
+}
+
+async function startCall(toUserId) {
+  const data = await api("/api/call/start", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ toUserId })
+  });
+
+  if (!data.ok) {
+    alert(data.error || "Kunne ikke starte opkald");
+    return;
+  }
+
+  logActivity("Opkald startet");
+  await loadOutgoingCalls();
+}
+
+async function answerCall(callId) {
+  const data = await api("/api/call/answer", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ callId })
+  });
+
+  if (data.ok) {
+    location.href = "/call.html?call=" + encodeURIComponent(callId);
+  }
+}
+
+async function rejectCall(callId) {
+  await api("/api/call/reject", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ callId })
+  });
+  logActivity("Opkald afvist");
+  await refreshAll();
+}
+
+function distanceMeters(a, b) {
+  if (!a || !b) return Infinity;
+  const R = 6371000;
+  const toRad = deg => deg * Math.PI / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function adaptiveGpsPolicy(pos) {
+  const now = Date.now();
+  const current = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+  const distance = distanceMeters(lastGpsSentPosition, current);
+  const secondsSinceLast = lastGpsSentAt ? (now - lastGpsSentAt) / 1000 : Infinity;
+  const speed = pos.coords.speed !== null && pos.coords.speed !== undefined
+    ? pos.coords.speed
+    : distance / Math.max(secondsSinceLast, 1);
+
+  let intervalSeconds = 30;
+  let minDistanceMeters = 10;
+  let mode = "stille";
+
+  if (speed >= 8) {
+    intervalSeconds = 2;
+    minDistanceMeters = 10;
+    mode = "kører";
+  } else if (speed >= 1.2) {
+    intervalSeconds = 5;
+    minDistanceMeters = 5;
+    mode = "går/løber";
+  }
+
+  return {
+    shouldSend: !lastGpsSentAt || secondsSinceLast >= intervalSeconds || distance >= minDistanceMeters,
+    mode, speed, distance, secondsSinceLast, intervalSeconds, minDistanceMeters
+  };
+}
+
+function startGpsTracking() {
+  if (!navigator.geolocation) {
+    locationStatus.textContent = "Browseren understøtter ikke GPS/geolocation.";
+    return;
+  }
+
+  if (geoWatchId !== null) return;
+
+  geoWatchId = navigator.geolocation.watchPosition(async pos => {
+    const policy = adaptiveGpsPolicy(pos);
+
+    if (!policy.shouldSend) {
+      locationStatus.textContent =
+        "GPS aktiv (" + policy.mode + ") - venter med at sende. Sidst sendt for " +
+        Math.round(policy.secondsSinceLast) + " sek. siden.";
+      return;
+    }
+
+    const payload = {
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      accuracy: Math.round(pos.coords.accuracy || 0),
+      speed: pos.coords.speed,
+      mode: policy.mode
+    };
+
+    try {
+      await api("/api/location/update", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+
+      lastGpsSentAt = Date.now();
+      lastGpsSentPosition = { latitude: payload.latitude, longitude: payload.longitude };
+
+      locationStatus.textContent =
+        "GPS sendt (" + policy.mode + "): " +
+        payload.latitude.toFixed(6) + ", " +
+        payload.longitude.toFixed(6) +
+        " ±" + payload.accuracy + " m";
+    } catch (e) {
+      locationStatus.textContent = "GPS kunne ikke sendes: " + e.message;
+    }
+  }, err => {
+    locationStatus.textContent = "GPS-fejl: " + err.message;
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 3000,
+    timeout: 15000
+  });
+}
+
+function stopGpsTracking() {
+  if (geoWatchId !== null) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+  }
+  lastGpsSentAt = 0;
+  lastGpsSentPosition = null;
+}
+
+async function toggleFollowMe() {
+  followMeEnabled = !followMeEnabled;
+
+  await api("/api/location/follow-me", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ enabled: followMeEnabled })
+  });
+
+  updateFollowMeUi();
+
+  if (followMeEnabled) startGpsTracking();
+  else stopGpsTracking();
+
+  logActivity(followMeEnabled ? "Følg mig slået til" : "Følg mig slået fra");
+  await refreshAll();
+}
+
+logoutBtn.onclick = async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location.href = "/login.html";
+};
+
+refreshAll().then(() => {
+  if (followMeEnabled) startGpsTracking();
+});
+
+setInterval(() => {
+  loadUsers();
+  loadIncomingCalls();
+  loadOutgoingCalls();
+  checkInboxBlink();
+  if (activeChatUserId && directChatWindow && !directChatWindow.closed) renderUserChat();
+}, 2000);
+
+checkInboxBlink();
+</script>
+</body>
+</html>

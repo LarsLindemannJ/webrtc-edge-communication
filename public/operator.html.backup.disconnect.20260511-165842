@@ -90,12 +90,6 @@
   <link rel="stylesheet" href="operator-grid-safe.css">
   <link rel="stylesheet" href="vendor/gridstack/gridstack.min.css">
   <link rel="stylesheet" href="operator-status-widget.css">
-  <link rel="stylesheet" href="operator-gps-widget.css">
-  <link rel="stylesheet" href="operator-battery-widget.css">
-  <link rel="stylesheet" href="operator-info-widgets.css">
-  <link rel="stylesheet" href="operator-camera-audio-widgets.css">
-  <link rel="stylesheet" href="operator-design-mode.css">
-  <link rel="stylesheet" href="operator-main-grid.css">
 </head>
 <body>
 <header style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -966,18 +960,8 @@ peer.on("error", err => {
   statusEl.textContent = "fejl: " + err.message;
 });
 </script>
-  <!-- disabled debug: <script src="operator-grid-safe.js"></script> -->
+  <script src="operator-grid-safe.js"></script>
   <script src="vendor/gridstack/gridstack-all.js"></script>
-  <!-- disabled debug: <script src="operator-status-widget.js"></script> -->
-  <!-- disabled debug: <script src="operator-gps-widget.js"></script> -->
-  <!-- disabled debug: <script src="operator-battery-widget.js"></script> -->
-  <!-- disabled debug: <script src="operator-info-widgets.js"></script> -->
-  <!-- disabled debug: <script src="operator-camera-audio-widgets.js"></script> -->
-  <script src="operator-audio-force-fix.js"></script>
-  <!-- disabled debug: <script src="operator-design-mode.js"></script> -->
-  <!-- disabled debug: <script src="operator-main-grid.js"></script> -->
-  <script src="operator-widget-cleanup.js"></script>
-  <script src="remove-empty-widget-titles.js"></script>
-  <script src="hide-topbar-status.js"></script>
+  <script src="operator-status-widget.js"></script>
 </body>
 </html>

@@ -1,0 +1,37 @@
+#cameraWidgetGrid,
+#audioWidgetGrid {
+  margin: 12px 0;
+}
+
+#cameraWidgetGrid .grid-stack-item-content,
+#audioWidgetGrid .grid-stack-item-content {
+  background: var(--panel, #111827);
+  color: var(--text, #f9fafb);
+  border: 1px solid var(--border, #374151);
+  border-radius: var(--radius, 12px);
+  padding: 10px;
+  overflow: auto;
+}
+
+.camera-audio-widget-title {
+  cursor: move;
+  user-select: none;
+  font-weight: 700;
+  color: var(--accent, #ff8800);
+  border-bottom: 1px solid var(--border, #374151);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.camera-audio-widget-body video {
+  width: 100%;
+  max-height: 320px;
+  background: #000;
+}
+
+.camera-audio-widget-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
