@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Opret bruger</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <h2>Opret bruger</h2>
+  <div class="panel">
+    <input id="username" placeholder="Brugernavn"><br><br>
+    <input id="displayName" placeholder="Visningsnavn"><br><br>
+    <input id="password" type="password" placeholder="Password"><br><br>
+    <button id="registerBtn">Opret</button>
+    <a href="/login.html"><button>Log ind</button></a>
+    <pre id="out"></pre>
+  </div>
+</main>
+<script>
+registerBtn.onclick = async () => {
+  const res = await fetch("/api/register", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      username: username.value,
+      displayName: displayName.value,
+      password: password.value
+    })
+  });
+  const data = await res.json();
+  out.textContent = JSON.stringify(data, null, 2);
+  if (data.ok) location.href = "/login.html";
+};
+</script>
+</body>
+</html>

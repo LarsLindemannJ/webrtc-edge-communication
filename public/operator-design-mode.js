@@ -26,6 +26,8 @@
     if (btn) btn.textContent = enabled ? "Lås layout" : "Design mode";
   }
 
+  window.setOperatorDesignMode = setDesignMode;
+
   function createToolbar() {
     if (document.getElementById("designModeToolbar")) return;
 
@@ -33,6 +35,7 @@
     toolbar.id = "designModeToolbar";
     toolbar.innerHTML = `
       <button id="toggleDesignModeBtn" type="button">Design mode</button>
+      <button id="saveDefaultLayoutBtn" type="button">Gem layout som default</button>
       <button id="resetAllLayoutsBtn" type="button">Reset layouts</button>
     `;
 
@@ -43,11 +46,23 @@
       setDesignMode(enabled);
     };
 
+    document.getElementById("saveDefaultLayoutBtn").onclick = () => {
+      allGrids().forEach(grid => {
+        try {
+          if (grid.el && grid.el.id === "operatorMainGrid") {
+            localStorage.setItem("webrtc-main-grid-layout-v2", JSON.stringify(grid.save(false)));
+          }
+        } catch (e) {}
+      });
+      alert("Layout gemt som default.");
+    };
+
     document.getElementById("resetAllLayoutsBtn").onclick = () => {
       Object.keys(localStorage)
-        .filter(k => k.includes("webrtc") && k.includes("widget-layout"))
+        .filter(k => k.includes("webrtc") && k.includes("layout"))
         .forEach(k => localStorage.removeItem(k));
 
+      localStorage.setItem(STORAGE_KEY, "0");
       location.reload();
     };
   }
@@ -55,9 +70,24 @@
   window.addEventListener("load", () => {
     createToolbar();
 
-    setTimeout(() => {
-      const enabled = localStorage.getItem(STORAGE_KEY) === "1";
-      setDesignMode(enabled);
-    }, 500);
+    // Start ALTID låst som default
+    localStorage.setItem(STORAGE_KEY, "0");
+
+    // Lås både før og efter operatorMainGrid bliver oprettet ved 1500 ms
+    [100, 500, 1200, 1800, 2500, 4000].forEach(ms => {
+      setTimeout(() => setDesignMode(false), ms);
+    });
+
+    // Hvis nye grids dukker op senere, så lås dem også
+    const observer = new MutationObserver(() => {
+      if (!document.body.classList.contains("design-mode-on")) {
+        setDesignMode(false);
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
   });
 })();

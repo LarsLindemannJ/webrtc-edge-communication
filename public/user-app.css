@@ -1,0 +1,56 @@
+.user-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.user-topbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--accent);
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  background: #000;
+  z-index: 10;
+}
+
+.user-topbar h2 {
+  margin: 0;
+}
+
+.user-spacer {
+  flex: 1;
+}
+
+.user-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.user-card {
+  border: 1px solid var(--accent);
+  padding: 12px;
+  background: #000;
+  min-height: 120px;
+}
+
+.user-card h3 {
+  margin-top: 0;
+}
+
+.user-row {
+  border: 1px solid var(--accent);
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.user-muted {
+  opacity: 0.75;
+}
+
+.user-warning {
+  color: #ff9900;
+}
