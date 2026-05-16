@@ -1,6 +1,6 @@
-# WebRTC Edge Communication
+# VisionRTC
 
-WebRTC Edge Communication er en browserbaseret support- og kommunikationsprototype, der bruger **WebRTC** og **PeerJS** til realtime kommunikation mellem en operatør og en klient.
+VisionRTC er en browserbaseret support- og kommunikationsprototype, der bruger **WebRTC** og **PeerJS** til realtime kommunikation mellem en operatør og en klient.
 
 Projektet demonstrerer en praktisk løsning til lav-latency kommunikation, hvor en operatør kan oprette forbindelse til en klient via browseren, dele lyd/video, udveksle beskeder og bruge et QR-baseret klientlink til hurtig opkobling.
 
@@ -110,7 +110,7 @@ Når WebRTC-forbindelsen er etableret, foregår selve kommunikationens mediestr�
 ## Repository-struktur
 
 ```text
-webrtc-edge-communication/
+visionrtc/
 │
 ├── public/
 │   ├── client.html
@@ -197,13 +197,13 @@ Certifikater i `cert/` er ignoreret af git og må ikke commit’es.
 Byg image:
 
 ```bash
-docker build -t webrtc-edge-communication .
+docker build -t visionrtc .
 ```
 
 Kør container:
 
 ```bash
-docker run --rm -p 8080:8080 -p 8443:8443 webrtc-edge-communication
+docker run --rm -p 8080:8080 -p 8443:8443 visionrtc
 ```
 
 Hvis du vil bruge HTTPS i Docker, kan du mounte lokale certifikater ind i containeren:
@@ -213,7 +213,7 @@ docker run --rm \
   -p 8080:8080 \
   -p 8443:8443 \
   -v "$PWD/cert:/app/cert:ro" \
-  webrtc-edge-communication
+  visionrtc
 ```
 
 ---
