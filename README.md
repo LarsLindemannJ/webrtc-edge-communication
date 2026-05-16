@@ -6,6 +6,22 @@ Projektet demonstrerer en praktisk løsning til lav-latency kommunikation, hvor 
 
 > Projektet indeholder ikke AI. Fokus er realtime kommunikation, browserbaseret interaktion, PeerJS/WebRTC og praktisk prototypeudvikling.
 
+## Screenshots
+
+### Operator Interface
+
+![Operator Interface](docs/operator-interface.png)
+
+Operator-view med realtime video, klientstatus, GPS/device-information og kommunikationskontrol.
+
+---
+
+### Client Interface
+
+![Client Interface](docs/client-interface.png)
+
+Browserbaseret klientinterface med kamera/mikrofon, QR-flow og realtime kommunikation via WebRTC.
+
 ---
 
 ## Formål
